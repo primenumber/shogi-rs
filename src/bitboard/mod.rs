@@ -2,6 +2,8 @@ use std::fmt;
 use std::iter;
 use std::ops;
 
+use bitintr::Pext;
+
 use super::{Color, PieceType, Square};
 
 /// Represents a board state in which each square takes two possible values, filled or empty.
@@ -81,6 +83,47 @@ impl Bitboard {
     #[inline(always)]
     fn merge(&self) -> u64 {
         self.p[0] | self.p[1]
+    }
+
+    /// Parallel bit extract - extracts bits from self according to mask.
+    ///
+    /// For each bit position set in the mask, the corresponding bit from self
+    /// is extracted and packed into the result, starting from the least significant bit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shogi::Bitboard;
+    /// use shogi::square::consts::*;
+    ///
+    /// let mut src = Bitboard::empty();
+    /// src |= SQ_1A;  // bit 0
+    /// src |= SQ_2A;  // bit 1
+    /// src |= SQ_4A;  // bit 3
+    ///
+    /// let mut mask = Bitboard::empty();
+    /// mask |= SQ_2A; // bit 1
+    /// mask |= SQ_4A; // bit 3
+    ///
+    /// let result = src.pext(&mask);
+    /// // Bits at positions 1 and 3 from src are extracted and packed as bits 0 and 1
+    /// assert_eq!(result.count(), 2);
+    /// ```
+    #[inline(always)]
+    pub fn pext(&self, mask: &Bitboard) -> Bitboard {
+        let extracted_low = self.p[0].pext(mask.p[0]);
+        let extracted_high = self.p[1].pext(mask.p[1]);
+
+        // Count how many bits are set in mask.p[0] to know where to place extracted_high
+        let low_bit_count = mask.p[0].count_ones();
+
+        // Combine: extracted_low in lower bits, extracted_high shifted up
+        let combined_low = extracted_low | (extracted_high << low_bit_count);
+        let combined_high = extracted_high >> (64 - low_bit_count);
+
+        Bitboard {
+            p: [combined_low, combined_high],
+        }
     }
 }
 
@@ -339,6 +382,63 @@ pub use self::factory::Factory;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn it_works() {}
+
+    #[test]
+    fn test_pext_basic() {
+        // Test with simple bit patterns
+        let mut src = Bitboard::empty();
+        src.p[0] = 0b10110110; // bits 1, 2, 4, 5, 7 are set
+
+        let mut mask = Bitboard::empty();
+        mask.p[0] = 0b10101010; // bits 1, 3, 5, 7 are set (extract positions)
+
+        let result = src.pext(&mask);
+        // pext extracts bits at mask positions and packs them:
+        // Position 1: src=1 → result bit 0 = 1
+        // Position 3: src=0 → result bit 1 = 0
+        // Position 5: src=1 → result bit 2 = 1
+        // Position 7: src=1 → result bit 3 = 1
+        // Result: 0b1101 = 13
+        assert_eq!(result.p[0] & 0xFF, 0b1101);
+    }
+
+    #[test]
+    fn test_pext_empty() {
+        let src = Bitboard::empty();
+        let mask = Bitboard::empty();
+        let result = src.pext(&mask);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_pext_full_mask() {
+        let mut src = Bitboard::empty();
+        src.p[0] = 0x12345678;
+
+        let mut mask = Bitboard::empty();
+        mask.p[0] = u64::MAX;
+
+        let result = src.pext(&mask);
+        assert_eq!(result.p[0], 0x12345678);
+    }
+
+    #[test]
+    fn test_pext_cross_boundary() {
+        // Test extraction across p[0] and p[1] boundary
+        let mut src = Bitboard::empty();
+        src.p[0] = 0xFFFFFFFFFFFFFFFF; // All bits set in lower part
+        src.p[1] = 0x00000000000000FF; // Lower 8 bits set in upper part
+
+        let mut mask = Bitboard::empty();
+        mask.p[0] = 0x00000000000000FF; // Extract lower 8 bits from p[0]
+        mask.p[1] = 0x00000000000000FF; // Extract lower 8 bits from p[1]
+
+        let result = src.pext(&mask);
+        // Should have 8 bits from p[0] and 8 bits from p[1], total 16 bits set
+        assert_eq!(result.count(), 16);
+    }
 }
