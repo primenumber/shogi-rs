@@ -126,6 +126,14 @@ impl Bitboard {
             p: [combined_low, combined_high],
         }
     }
+
+    pub fn low(&self) -> u64 {
+        self.p[0]
+    }
+
+    pub fn high(&self) -> u64 {
+        self.p[1]
+    }
 }
 
 /////////////////////////////////////////////////////////////////////////////
