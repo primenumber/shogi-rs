@@ -2,7 +2,7 @@ use std::fmt;
 use std::iter;
 use std::ops;
 
-use bitintr::Pext;
+use bitintr::{Pdep, Pext};
 
 use super::{Color, PieceType, Square};
 
@@ -38,6 +38,12 @@ impl Bitboard {
     #[inline(always)]
     pub fn empty() -> Self {
         Bitboard { p: [0, 0] }
+    }
+
+    /// Creates a new instance of `Bitboard` from two u64 values.
+    #[inline(always)]
+    pub fn new(p0: u64, p1: u64) -> Self {
+        Bitboard { p: [p0, p1] }
     }
 
     /// Checks if any of its squares is filled.
@@ -124,6 +130,44 @@ impl Bitboard {
 
         Bitboard {
             p: [combined_low, combined_high],
+        }
+    }
+
+    /// Parallel bit deposit - deposits bits from self to positions indicated by mask.
+    ///
+    /// This is the inverse operation of pext. For each set bit in the mask,
+    /// the corresponding bit position receives a bit from self (in order from LSB).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shogi::Bitboard;
+    /// use shogi::square::consts::*;
+    ///
+    /// let mut src = Bitboard::new(0b11, 0); // bits 0 and 1 are set
+    ///
+    /// let mut mask = Bitboard::empty();
+    /// mask |= SQ_2A; // bit 1
+    /// mask |= SQ_4A; // bit 3
+    ///
+    /// let result = src.pdep(&mask);
+    /// // Bits 0 and 1 from src are deposited to positions 1 and 3 (from mask)
+    /// ```
+    #[inline(always)]
+    pub fn pdep(&self, mask: &Bitboard) -> Bitboard {
+        let mask_low = mask.p[0] & 0x7FFFFFFFFFFFFFFF;
+        let low_bit_count = mask_low.count_ones();
+
+        // Split self into parts for low and high
+        let src_low = self.p[0] & ((1u64 << low_bit_count) - 1);
+        let src_high = (self.p[0] >> low_bit_count) | (self.p[1] << (63 - low_bit_count));
+
+        // Deposit into respective parts
+        let deposited_low = src_low.pdep(mask_low);
+        let deposited_high = src_high.pdep(mask.p[1]);
+
+        Bitboard {
+            p: [deposited_low, deposited_high],
         }
     }
 

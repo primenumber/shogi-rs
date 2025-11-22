@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::fmt;
 use std::fmt::Write as _;
-use bitintr::Pext;
+use bitintr::{Pext, Pdep};
 
 use crate::bitboard::Factory as BBFactory;
 use crate::{Bitboard, Color, Hand, Move, MoveError, Piece, PieceType, SfenError, Square};
@@ -149,6 +149,181 @@ impl PackedPosition {
             accum |= (1u64 << num_black) - 1;
             accum
         })
+    }
+
+    // Unpack the PackedPosition into Position.
+    // Note: side_to_move must be provided as it's not stored in PackedPosition.
+    // Also note: ply is not preserved and defaults to 1, and move_history/packed_history are empty.
+    pub fn to_position(&self) -> Position {
+        // Extract occupied bitboard
+        let mut occupied_low = self.0[0] & 0x7fff_ffff_ffff_ffff; // 63 bits
+        let mut occupied_high = (self.0[1] & 0x0000_0000_0003_ffff) as u64;
+
+        let count = occupied_low.count_ones() + occupied_high.count_ones();
+
+        // If White to move, occupied was inverted during packing
+        let side_to_move = if count > 40 {
+            Color::White
+        } else {
+            Color::Black
+        };
+
+        if side_to_move == Color::White {
+            occupied_low = !occupied_low & 0x7fff_ffff_ffff_ffff; // 63 bits
+            occupied_high = !occupied_high & 0x0000_0000_0003_ffff; // 18 bits
+        }
+
+        let occupied_bb = Bitboard::new(occupied_low, occupied_high);
+
+        let pawn_packed = self.0[2] & 0x0000_00ff_ffff_ffff; // 40 bits
+        let lance_packed = (self.0[3] >> 56) & 0xff; // 8 bits
+        let silver_packed = (self.0[1] >> 18) & 0xff; // 8 bits
+        let bishop_packed = (self.0[2] >> 60) & 0x0f; // 4 bits
+        let color_packed = (self.0[1] >> 26) & 0x3f_ffff_ffff; // 38 bits
+        let promoted_packed = self.0[3] & 0x0000_0003_ffff_ffff; // 34 bits
+
+        // bit 4
+        let bishop_or_rook_packed = (self.0[2] >> 54) & 0x3f;
+        let bishop_packed = bishop_packed.pdep(bishop_or_rook_packed);
+        let rook_packed = (!bishop_packed).pdep(bishop_or_rook_packed);
+
+        // bit 3
+        let silver_or_gold_packed = (self.0[2] >> 40) & 0x3fff;
+        let silver_packed = silver_packed.pdep(silver_or_gold_packed);
+        let gold_packed = (!silver_packed).pdep(silver_or_gold_packed);
+
+        let kbr_packed = !silver_or_gold_packed & 0x3fff;
+        let king_packed = (!bishop_or_rook_packed).pdep(kbr_packed);
+        let bishop_packed = bishop_packed.pdep(kbr_packed);
+        let rook_packed = rook_packed.pdep(kbr_packed);
+
+        // bit 2
+        let lance_or_knight_packed = (self.0[3] >> 34) & 0x3fffff;
+        let lance_packed = lance_packed.pdep(lance_or_knight_packed);
+        let knight_packed = (!lance_packed).pdep(lance_or_knight_packed);
+
+        let kbrsg_packed = !lance_or_knight_packed & 0x3fffff;
+        let king_packed = king_packed.pdep(kbrsg_packed);
+        let bishop_packed = bishop_packed.pdep(kbrsg_packed);
+        let rook_packed = rook_packed.pdep(kbrsg_packed);
+        let silver_packed = silver_packed.pdep(kbrsg_packed);
+        let gold_packed = gold_packed.pdep(kbrsg_packed);
+
+        // bit 1
+        let non_pawn_packed = !pawn_packed & 0x0000_00ff_ffff_ffff;
+        let lance_packed = lance_packed.pdep(non_pawn_packed);
+        let knight_packed = knight_packed.pdep(non_pawn_packed);
+        let silver_packed = silver_packed.pdep(non_pawn_packed);
+        let gold_packed = gold_packed.pdep(non_pawn_packed);
+        let bishop_packed = bishop_packed.pdep(non_pawn_packed);
+        let rook_packed = rook_packed.pdep(non_pawn_packed);
+        let king_packed = king_packed.pdep(non_pawn_packed);
+
+        let non_king_packed = !king_packed & 0x0000_00ff_ffff_ffff;
+        let color_packed_board = color_packed & ((1u64 << (count - 2)) - 1);
+        let color_packed_hand = color_packed >> (count - 2);
+        let color_packed_board = color_packed_board.pdep(non_king_packed);
+        let promoted_packed = promoted_packed.pdep(!king_packed & !gold_packed);
+
+        // count hand pieces
+        let pawn_hand_count = 18 - pawn_packed.count_ones();
+        let lance_hand_count = 4 - lance_packed.count_ones();
+        let knight_hand_count = 4 - knight_packed.count_ones();
+        let silver_hand_count = 4 - silver_packed.count_ones();
+        let gold_hand_count = 4 - gold_packed.count_ones();
+        let bishop_hand_count = 2 - bishop_packed.count_ones();
+        let rook_hand_count = 2 - rook_packed.count_ones();
+
+        // Reconstruct pieces on board
+        let king_bb = Bitboard::new(king_packed, 0).pdep(&occupied_bb);
+        let pawn_bb = Bitboard::new(pawn_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let lance_bb = Bitboard::new(lance_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let knight_bb = Bitboard::new(knight_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let silver_bb = Bitboard::new(silver_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let gold_bb = Bitboard::new(gold_packed, 0).pdep(&occupied_bb);
+        let bishop_bb = Bitboard::new(bishop_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let rook_bb = Bitboard::new(rook_packed & !promoted_packed, 0).pdep(&occupied_bb);
+        let pro_pawn_bb = Bitboard::new(promoted_packed & pawn_packed, 0).pdep(&occupied_bb);
+        let pro_lance_bb = Bitboard::new(promoted_packed & lance_packed, 0).pdep(&occupied_bb);
+        let pro_knight_bb = Bitboard::new(promoted_packed & knight_packed, 0).pdep(&occupied_bb);
+        let pro_silver_bb = Bitboard::new(promoted_packed & silver_packed, 0).pdep(&occupied_bb);
+        let pro_bishop_bb = Bitboard::new(promoted_packed & bishop_packed, 0).pdep(&occupied_bb);
+        let pro_rook_bb = Bitboard::new(promoted_packed & rook_packed, 0).pdep(&occupied_bb);
+        let color_board_bb = Bitboard::new(color_packed_board, 0).pdep(&occupied_bb);
+
+        let bbs = [
+            (PieceType::King, king_bb),
+            (PieceType::Rook, rook_bb),
+            (PieceType::Bishop, bishop_bb),
+            (PieceType::Gold, gold_bb),
+            (PieceType::Silver, silver_bb),
+            (PieceType::Knight, knight_bb),
+            (PieceType::Lance, lance_bb),
+            (PieceType::Pawn, pawn_bb),
+            (PieceType::ProRook, pro_rook_bb),
+            (PieceType::ProBishop, pro_bishop_bb),
+            (PieceType::ProSilver, pro_silver_bb),
+            (PieceType::ProKnight, pro_knight_bb),
+            (PieceType::ProLance, pro_lance_bb),
+            (PieceType::ProPawn, pro_pawn_bb),
+        ];
+
+        let mut board = PieceGrid([None; 81]);
+        for (pt, bb) in bbs.iter() {
+            let mut black_bb = bb & &color_board_bb;
+            let mut white_bb = bb & &(!&color_board_bb);
+            while black_bb.is_any() {
+                let sq = black_bb.pop();
+                board.set(sq, Some(Piece {
+                    piece_type: *pt,
+                    color: Color::Black,
+                }));
+            }
+            while white_bb.is_any() {
+                let sq = white_bb.pop();
+                board.set(sq, Some(Piece {
+                    piece_type: *pt,
+                    color: Color::White,
+                }));
+            }
+        }
+
+        let mut hand = Hand::default();
+        [
+            (PieceType::Pawn, pawn_hand_count),
+            (PieceType::Lance, lance_hand_count),
+            (PieceType::Knight, knight_hand_count),
+            (PieceType::Silver, silver_hand_count),
+            (PieceType::Gold, gold_hand_count),
+            (PieceType::Bishop, bishop_hand_count),
+            (PieceType::Rook, rook_hand_count),
+        ].iter().fold(color_packed_hand, |color_packed_hand, &(pt, count)| {
+            let bits = color_packed_hand & ((1u64 << count) - 1);
+            let num_black = bits.count_ones() as u8;
+            let num_white = count as u8 - num_black;
+            if num_black > 0 {
+                hand.set(Piece { piece_type: pt, color: Color::Black }, num_black);
+            }
+            if num_white > 0 {
+                hand.set(Piece { piece_type: pt, color: Color::White }, num_white);
+            }
+            color_packed_hand >> count
+        });
+        Position {
+            board: board,
+            hand,
+            ply: 1,
+            side_to_move,
+            move_history: Vec::new(),
+            packed_history: Vec::new(),
+            initial_sfen: None,
+            occupied_bb,
+            color_bb: [
+                color_board_bb.clone(),
+                (&occupied_bb & &!&color_board_bb),
+            ],
+            type_bb: bbs.iter().map(|(_, bb)| bb.clone()).collect_vec().try_into().unwrap(),
+        }
     }
 
     // Pack the given Position into PackedPosition.
