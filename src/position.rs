@@ -159,7 +159,7 @@ impl PackedPosition {
         let mut occupied_low = self.0[0] & 0x7fff_ffff_ffff_ffff; // 63 bits
         let mut occupied_high = (self.0[1] & 0x0000_0000_0003_ffff) as u64;
 
-        let count = occupied_low.count_ones() + occupied_high.count_ones();
+        let mut count = occupied_low.count_ones() + occupied_high.count_ones();
 
         // If White to move, occupied was inverted during packing
         let side_to_move = if count > 40 {
@@ -171,7 +171,10 @@ impl PackedPosition {
         if side_to_move == Color::White {
             occupied_low = !occupied_low & 0x7fff_ffff_ffff_ffff; // 63 bits
             occupied_high = !occupied_high & 0x0000_0000_0003_ffff; // 18 bits
+            count = occupied_low.count_ones() + occupied_high.count_ones();
         }
+
+        let king_black_index_less = (self.0[0] >> 63) & 0x1 == 1;
 
         let occupied_bb = Bitboard::new(occupied_low, occupied_high);
 
@@ -183,14 +186,14 @@ impl PackedPosition {
         let promoted_packed = self.0[3] & 0x0000_0003_ffff_ffff; // 34 bits
 
         // bit 4
-        let bishop_or_rook_packed = (self.0[2] >> 54) & 0x3f;
-        let bishop_packed = bishop_packed.pdep(bishop_or_rook_packed);
+        let bishop_or_rook_packed = (self.0[2] >> 54) & 0x3f; // 6 bits
         let rook_packed = (!bishop_packed).pdep(bishop_or_rook_packed);
+        let bishop_packed = bishop_packed.pdep(bishop_or_rook_packed);
 
         // bit 3
-        let silver_or_gold_packed = (self.0[2] >> 40) & 0x3fff;
-        let silver_packed = silver_packed.pdep(silver_or_gold_packed);
+        let silver_or_gold_packed = (self.0[2] >> 40) & 0x3fff; // 14 bits
         let gold_packed = (!silver_packed).pdep(silver_or_gold_packed);
+        let silver_packed = silver_packed.pdep(silver_or_gold_packed);
 
         let kbr_packed = !silver_or_gold_packed & 0x3fff;
         let king_packed = (!bishop_or_rook_packed).pdep(kbr_packed);
@@ -198,9 +201,9 @@ impl PackedPosition {
         let rook_packed = rook_packed.pdep(kbr_packed);
 
         // bit 2
-        let lance_or_knight_packed = (self.0[3] >> 34) & 0x3fffff;
-        let lance_packed = lance_packed.pdep(lance_or_knight_packed);
+        let lance_or_knight_packed = (self.0[3] >> 34) & 0x3fffff; // 22 bits
         let knight_packed = (!lance_packed).pdep(lance_or_knight_packed);
+        let lance_packed = lance_packed.pdep(lance_or_knight_packed);
 
         let kbrsg_packed = !lance_or_knight_packed & 0x3fffff;
         let king_packed = king_packed.pdep(kbrsg_packed);
@@ -210,19 +213,27 @@ impl PackedPosition {
         let gold_packed = gold_packed.pdep(kbrsg_packed);
 
         // bit 1
-        let non_pawn_packed = !pawn_packed & 0x0000_00ff_ffff_ffff;
-        let lance_packed = lance_packed.pdep(non_pawn_packed);
-        let knight_packed = knight_packed.pdep(non_pawn_packed);
-        let silver_packed = silver_packed.pdep(non_pawn_packed);
-        let gold_packed = gold_packed.pdep(non_pawn_packed);
-        let bishop_packed = bishop_packed.pdep(non_pawn_packed);
-        let rook_packed = rook_packed.pdep(non_pawn_packed);
-        let king_packed = king_packed.pdep(non_pawn_packed);
+        let mask = (1u64 << count) - 1;
+        let non_pawn_packed = !pawn_packed & mask;
+        let lance_packed = lance_packed.pdep(non_pawn_packed) & mask;
+        let knight_packed = knight_packed.pdep(non_pawn_packed) & mask;
+        let silver_packed = silver_packed.pdep(non_pawn_packed) & mask;
+        let gold_packed = gold_packed.pdep(non_pawn_packed) & mask;
+        let bishop_packed = bishop_packed.pdep(non_pawn_packed) & mask;
+        let rook_packed = rook_packed.pdep(non_pawn_packed) & mask;
+        let king_packed = king_packed.pdep(non_pawn_packed) & mask;
+        let king_bit_low = king_packed & king_packed.wrapping_neg();
+        let king_bit_high = king_packed ^ king_bit_low;
+        let king_color_packed = if king_black_index_less {
+            king_bit_low
+        } else {
+            king_bit_high
+        };
 
-        let non_king_packed = !king_packed & 0x0000_00ff_ffff_ffff;
+        let non_king_packed = !king_packed & mask;
         let color_packed_board = color_packed & ((1u64 << (count - 2)) - 1);
         let color_packed_hand = color_packed >> (count - 2);
-        let color_packed_board = color_packed_board.pdep(non_king_packed);
+        let color_packed_board = color_packed_board.pdep(non_king_packed) | king_color_packed;
         let promoted_packed = promoted_packed.pdep(!king_packed & !gold_packed);
 
         // count hand pieces
