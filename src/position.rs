@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use std::fmt;
 use std::fmt::Write as _;
+use bitintr::Pext;
 
 use crate::bitboard::Factory as BBFactory;
 use crate::{Bitboard, Color, Hand, Move, MoveError, Piece, PieceType, SfenError, Square};
@@ -80,6 +81,142 @@ impl fmt::Debug for PieceGrid {
             write!(fmt, "{pc:?} ")?;
         }
         write!(fmt, "}}")
+    }
+}
+
+// A compact representation of Position
+// Layout (bit index):
+// bits[0..63]   : occupied_low (63 bits)
+// bit 63        : black_king_index < white_king_index
+//
+// bits[64..81]  : occupied_high (18 bits)
+// bits[81..89]  : is_silver (8 bits)
+// bits[89..128] : is_black (38 bits)
+//
+// bits[128..168]: is_pawn (40 bits)
+// bits[168..182]: is_silver_or_gold (14 bits)
+// bits[182..188]: is_bishop_or_rook (6 bits)
+// bits[188..192]: is_bishop (4 bits)
+//
+// bits[192..226]: is_promoted (34 bits)
+// bits[226..248]: is_lance_or_knight (22 bits)
+// bits[248..256]: is_lance (8 bits)
+//
+// Total: 256 bits = 4 u64s
+//
+// Layout of color bits:
+// bits[0..(N-1)]: color of pieces on board except kings (N = occupied_bb.count() - 2)
+// bits[(N)..]: color of pieces in hand (rest bits)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackedPosition([u64; 4]);
+
+impl PackedPosition {
+    fn pack_by_occupied(pos: &Position) -> [u64; 14] {
+        PieceType::iter()
+            .map(|pt| pos.type_bb[pt.index()].pext(&pos.occupied_bb).low())
+            .collect_vec()
+            .try_into()
+            .unwrap()
+    }
+
+    // Pack hand pieces' colors into bits.
+    // Each piece type uses (num_black + num_white) bits, where
+    // num_black bits are set to 1, and num_white bits are set to 0.
+    // piece types are packed in the order of
+    // Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
+    fn packed_hand_colors(pos: &Position) -> u64 {
+        [
+            PieceType::Pawn,
+            PieceType::Lance,
+            PieceType::Knight,
+            PieceType::Silver,
+            PieceType::Gold,
+            PieceType::Bishop,
+            PieceType::Rook,
+        ]
+        .iter()
+        .rev()
+        .fold(0u64, |mut accum, &pt| {
+            let num_black = pos.hand.get(Piece {
+                piece_type: pt,
+                color: Color::Black,
+            }) as u64;
+            let num_white = pos.hand.get(Piece {
+                piece_type: pt,
+                color: Color::White,
+            }) as u64;
+            accum <<= num_black + num_white;
+            accum |= (1u64 << num_black) - 1;
+            accum
+        })
+    }
+
+    // Pack the given Position into PackedPosition.
+    pub fn from_position(pos: &Position) -> PackedPosition {
+        let mut data = [0u64; 4];
+        let mut occupied_low = pos.occupied_bb.low();
+        let mut occupied_high = pos.occupied_bb.high();
+        if pos.side_to_move == Color::White {
+            occupied_low = !occupied_low & 0x7fffffff_ffffffff; // 63bits
+            occupied_high = !occupied_high & 0x00000000_0003ffff; // 18bits
+        }
+        let black_king_index = pos.find_king(Color::Black).unwrap().index() as u8;
+        let white_king_index = pos.find_king(Color::White).unwrap().index() as u8;
+        let packed_bb = PackedPosition::pack_by_occupied(pos);
+
+        // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
+        // order bits of the result
+        let promoted_packed = [
+            PieceType::ProPawn,
+            PieceType::ProLance,
+            PieceType::ProKnight,
+            PieceType::ProSilver,
+            PieceType::ProBishop,
+            PieceType::ProRook,
+        ]
+        .iter()
+        .fold(0u64, |accum, pt| &accum | packed_bb[pt.index()]);
+        let pawn_packed = &packed_bb[PieceType::Pawn.index()] | &packed_bb[PieceType::ProPawn.index()];
+        let lance_packed = &packed_bb[PieceType::Lance.index()] | &packed_bb[PieceType::ProLance.index()];
+        let knight_packed = &packed_bb[PieceType::Knight.index()] | &packed_bb[PieceType::ProKnight.index()];
+        let silver_packed = &packed_bb[PieceType::Silver.index()] | &packed_bb[PieceType::ProSilver.index()];
+        let gold_packed = &packed_bb[PieceType::Gold.index()];
+        let bishop_packed = &packed_bb[PieceType::Bishop.index()] | &packed_bb[PieceType::ProBishop.index()];
+        let rook_packed = &packed_bb[PieceType::Rook.index()] | &packed_bb[PieceType::ProRook.index()];
+        let king_packed = &packed_bb[PieceType::King.index()];
+        let lance_or_knight = lance_packed | knight_packed;
+        let silver_or_gold = silver_packed | gold_packed;
+        let bishop_or_rook = bishop_packed | rook_packed;
+        let promoted_packed = promoted_packed.pext(!(king_packed | gold_packed));
+        let kbr_packed = king_packed | bishop_or_rook;
+        let kbrsg_packed = kbr_packed | silver_or_gold;
+
+        let color_packed_board = pos.color_bb[Color::Black.index()]
+            .pext(&pos.occupied_bb)
+            .low()
+            .pext(!king_packed);
+        let color_packed_hand = PackedPosition::packed_hand_colors(pos);
+        let color_packed =
+            color_packed_board | (color_packed_hand << (pos.occupied_bb.count() as u32 - king_packed.count_ones()));
+
+        data[0] = occupied_low;
+        if black_king_index < white_king_index {
+            data[0] |= 0x8000_0000_0000_0000; // set MSB to 1
+        }
+
+        data[1] = occupied_high;
+        data[1] |= silver_packed.pext(silver_or_gold) << 18;
+        data[1] |= color_packed << 26;
+
+        data[2] = pawn_packed;
+        data[2] |= silver_or_gold.pext(kbrsg_packed) << 40;
+        data[2] |= bishop_or_rook.pext(kbr_packed) << 54;
+        data[2] |= bishop_packed.pext(bishop_or_rook) << 60;
+
+        data[3] = promoted_packed;
+        data[3] |= lance_or_knight.pext(!pawn_packed) << 34;
+        data[3] |= lance_packed.pext(lance_or_knight) << 56;
+        PackedPosition(data)
     }
 }
 
