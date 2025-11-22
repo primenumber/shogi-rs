@@ -2124,4 +2124,75 @@ mod tests {
         assert_eq!(Color::White, pos.side_to_move());
         assert_eq!(1024, pos.ply());
     }
+
+    #[test]
+    fn packed_position_roundtrip() {
+        setup();
+
+        let test_cases = [
+            // Standard starting position
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+            // Position with pieces in hand and promoted pieces (from set_sfen_custom test)
+            "lnsgk+Lpnl/1p5+B1/p1+Pps1ppp/9/9/9/P+r1PPpPPP/1R7/LNSGKGSN1 w BGP2p 1024",
+            // Position from make_normal_move test
+            "l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w GR5pnsg 1",
+        ];
+
+        for (i, &sfen) in test_cases.iter().enumerate() {
+            let mut original_pos = Position::new();
+            original_pos
+                .set_sfen(sfen)
+                .unwrap_or_else(|_| panic!("failed to parse SFEN at case #{i}"));
+
+            // Pack the position
+            let packed = PackedPosition::from_position(&original_pos);
+
+            // Unpack the position
+            let restored_pos = packed.to_position();
+
+            // Verify board pieces match
+            for sq in Square::iter() {
+                assert_eq!(
+                    original_pos.piece_at(sq),
+                    restored_pos.piece_at(sq),
+                    "piece mismatch at {sq} in case #{i} (SFEN: {sfen})"
+                );
+            }
+
+            // Verify hand pieces match
+            for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
+                for c in [Color::Black, Color::White] {
+                    let piece = Piece {
+                        piece_type: pt,
+                        color: c,
+                    };
+                    assert_eq!(
+                        original_pos.hand(piece),
+                        restored_pos.hand(piece),
+                        "hand mismatch for {piece:?} in case #{i} (SFEN: {sfen})"
+                    );
+                }
+            }
+
+            // Verify side to move matches
+            assert_eq!(
+                original_pos.side_to_move(),
+                restored_pos.side_to_move(),
+                "side_to_move mismatch in case #{i} (SFEN: {sfen})"
+            );
+
+            // Verify bitboards match
+            assert_eq!(
+                original_pos.occupied_bb, restored_pos.occupied_bb,
+                "occupied_bb mismatch in case #{i} (SFEN: {sfen})"
+            );
+            for c in [Color::Black, Color::White] {
+                assert_eq!(
+                    original_pos.player_bb(c),
+                    restored_pos.player_bb(c),
+                    "color_bb[{c:?}] mismatch in case #{i} (SFEN: {sfen})"
+                );
+            }
+        }
+    }
 }

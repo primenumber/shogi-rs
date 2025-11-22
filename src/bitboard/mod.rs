@@ -24,7 +24,7 @@ use super::{Color, PieceType, Square};
 /// assert_eq!(2, bb.count());
 /// assert_eq!(1, bb.filter(|sq| sq.file() == 0).count());
 /// ```
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Bitboard {
     p: [u64; 2],
 }
