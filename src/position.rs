@@ -160,8 +160,8 @@ impl PackedPosition {
             occupied_low = !occupied_low & 0x7fffffff_ffffffff; // 63bits
             occupied_high = !occupied_high & 0x00000000_0003ffff; // 18bits
         }
-        let black_king_index = pos.find_king(Color::Black).unwrap().index() as u8;
-        let white_king_index = pos.find_king(Color::White).unwrap().index() as u8;
+        let black_king_index = pos.find_king(Color::Black).map(|sq| sq.index() as u8).unwrap_or(81);
+        let white_king_index = pos.find_king(Color::White).map(|sq| sq.index() as u8).unwrap_or(81);
         let packed_bb = PackedPosition::pack_by_occupied(pos);
 
         // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
@@ -245,7 +245,8 @@ pub struct Position {
     ply: u16,
     side_to_move: Color,
     move_history: Vec<MoveRecord>,
-    sfen_history: Vec<(String, u16)>,
+    packed_history: Vec<(PackedPosition, u16)>,
+    initial_sfen: Option<String>,
     occupied_bb: Bitboard,
     color_bb: [Bitboard; 2],
     type_bb: [Bitboard; 14],
@@ -415,12 +416,12 @@ impl Position {
     fn log_position(&mut self) {
         // TODO: SFEN string is used to represent a state of position, but any transformation which uniquely distinguish positions can be used here.
         // Consider light-weight option if generating SFEN string for each move is time-consuming.
-        let sfen = self.generate_sfen().split(' ').take(3).join(" ");
+        let packed_position = PackedPosition::from_position(self);
         let in_check = self.in_check(self.side_to_move());
 
         let continuous_check = if in_check {
-            let past = if self.sfen_history.len() >= 2 {
-                let record = self.sfen_history.get(self.sfen_history.len() - 2).unwrap();
+            let past = if self.packed_history.len() >= 2 {
+                let record = self.packed_history.get(self.packed_history.len() - 2).unwrap();
                 record.1
             } else {
                 0
@@ -430,7 +431,7 @@ impl Position {
             0
         };
 
-        self.sfen_history.push((sfen, continuous_check));
+        self.packed_history.push((packed_position, continuous_check));
     }
 
     /////////////////////////////////////////////////////////////////////////
@@ -766,7 +767,7 @@ impl Position {
 
         self.side_to_move = self.side_to_move.flip();
         self.ply -= 1;
-        self.sfen_history.pop();
+        self.packed_history.pop();
 
         Ok(())
     }
@@ -796,19 +797,19 @@ impl Position {
     }
 
     fn detect_repetition(&self) -> Result<(), MoveError> {
-        if self.sfen_history.len() < 9 {
+        if self.packed_history.len() < 9 {
             return Ok(());
         }
 
-        let cur = self.sfen_history.last().unwrap();
+        let cur = self.packed_history.last().unwrap();
 
         let mut cnt = 0;
-        for (i, entry) in self.sfen_history.iter().rev().enumerate() {
+        for (i, entry) in self.packed_history.iter().rev().enumerate() {
             if entry.0 == cur.0 {
                 cnt += 1;
 
                 if cnt == 4 {
-                    let prev = self.sfen_history.get(self.sfen_history.len() - 2).unwrap();
+                    let prev = self.packed_history.get(self.packed_history.len() - 2).unwrap();
 
                     if cur.1 * 2 >= (i as u16) {
                         return Err(MoveError::PerpetualCheckLose);
@@ -850,7 +851,8 @@ impl Position {
             .ok_or(SfenError::MissingDataFields)
             .and_then(|s| self.parse_sfen_ply(s))?;
 
-        self.sfen_history.clear();
+        self.packed_history.clear();
+        self.initial_sfen = Some(sfen_str.split(' ').take(3).join(" "));
         self.log_position();
 
         // Make moves following the initial position, optional.
@@ -875,17 +877,17 @@ impl Position {
 
     /// Converts the current state into SFEN formatted string.
     pub fn to_sfen(&self) -> String {
-        if self.sfen_history.is_empty() {
+        if self.packed_history.is_empty() {
             return self.generate_sfen();
         }
 
         if self.move_history.is_empty() {
-            return format!("{} {}", self.sfen_history.first().unwrap().0, self.ply);
+            return format!("{} {}", self.initial_sfen.clone().unwrap(), self.ply);
         }
 
         let mut sfen = format!(
             "{} {} moves",
-            &self.sfen_history.first().unwrap().0,
+            self.initial_sfen.clone().unwrap(),
             self.ply - self.move_history.len() as u16
         );
 
@@ -1082,7 +1084,8 @@ impl Default for Position {
             hand: Default::default(),
             ply: 1,
             move_history: Default::default(),
-            sfen_history: Default::default(),
+            packed_history: Default::default(),
+            initial_sfen: Default::default(),
             occupied_bb: Default::default(),
             color_bb: Default::default(),
             type_bb: Default::default(),
