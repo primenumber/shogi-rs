@@ -330,7 +330,7 @@ impl PackedPosition {
             ply,
             side_to_move,
             move_history: Vec::new(),
-            position_history: vec![(SerializedPosition::Packed(*self, ply), 0)],
+            position_history: vec![(SerializedPosition::Packed(*self), 0)],
             occupied_bb,
             color_bb: [
                 color_board_bb.clone(),
@@ -449,26 +449,38 @@ impl PackedPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SerializedPosition {
-    Packed(PackedPosition, u16), // u16 is ply
+    Packed(PackedPosition),
     FallbackedSfen(String),
 }
 
 impl SerializedPosition {
     fn from_position(pos: &Position) -> SerializedPosition {
         if let Some(packed) = PackedPosition::from_position::<true>(pos) {
-            SerializedPosition::Packed(packed, pos.ply)
+            SerializedPosition::Packed(packed)
         } else {
-            SerializedPosition::FallbackedSfen(pos.to_sfen())
+            SerializedPosition::FallbackedSfen(pos.generate_sfen().split(" ").take(3).join(" "))
         }
     }
 
-    fn to_position(&self) -> Position {
+    fn to_position(&self, ply: u16) -> Position {
         match self {
-            SerializedPosition::Packed(packed, ply) => packed.to_position(*ply),
+            SerializedPosition::Packed(packed) => packed.to_position(ply),
             SerializedPosition::FallbackedSfen(sfen) => {
                 let mut pos = Position::new();
                 pos.set_sfen(sfen).unwrap();
+                pos.ply = ply;
                 pos
+            }
+        }
+    }
+
+    fn to_position_sfen(&self) -> String {
+        match self {
+            SerializedPosition::Packed(packed) => {
+                packed.to_position(1).generate_sfen().split(" ").take(3).join(" ")
+            }
+            SerializedPosition::FallbackedSfen(sfen) => {
+                sfen.clone()
             }
         }
     }
@@ -1133,8 +1145,7 @@ impl Position {
             return self.generate_sfen();
         }
 
-        let initial_position = self.position_history.first().unwrap().0.to_position();
-        let initial_sfen = initial_position.generate_sfen().split_whitespace().take(3).join(" ");
+        let initial_sfen = self.position_history.first().unwrap().0.to_position_sfen();
         if self.move_history.is_empty() {
             return format!("{} {}", initial_sfen, self.ply);
         }
@@ -2215,7 +2226,7 @@ mod tests {
             let serialized = SerializedPosition::from_position(&original_pos);
 
             // Unpack the position
-            let restored_pos = serialized.to_position();
+            let restored_pos = serialized.to_position(1);
 
             // Verify board pieces match
             for sq in Square::iter() {
