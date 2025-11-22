@@ -111,15 +111,16 @@ impl Bitboard {
     /// ```
     #[inline(always)]
     pub fn pext(&self, mask: &Bitboard) -> Bitboard {
-        let extracted_low = self.p[0].pext(mask.p[0]);
+        let mask_low = mask.p[0] & 0x7FFFFFFFFFFFFFFF;
+        let extracted_low = self.p[0].pext(mask_low);
         let extracted_high = self.p[1].pext(mask.p[1]);
 
         // Count how many bits are set in mask.p[0] to know where to place extracted_high
-        let low_bit_count = mask.p[0].count_ones();
+        let low_bit_count = mask_low.count_ones();
 
         // Combine: extracted_low in lower bits, extracted_high shifted up
-        let combined_low = extracted_low | (extracted_high << low_bit_count);
-        let combined_high = extracted_high >> (64 - low_bit_count);
+        let combined_low = extracted_low | (extracted_high.wrapping_shl(low_bit_count) & 0x7FFFFFFFFFFFFFFF);
+        let combined_high = extracted_high >> (63 - low_bit_count);
 
         Bitboard {
             p: [combined_low, combined_high],
