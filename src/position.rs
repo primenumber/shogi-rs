@@ -151,8 +151,6 @@ impl Position {
     }
 
     fn log_position(&mut self) {
-        // TODO: SFEN string is used to represent a state of position, but any transformation which uniquely distinguish positions can be used here.
-        // Consider light-weight option if generating SFEN string for each move is time-consuming.
         let serialized_position = SerializedStateInfo::from_state_info(&self.state);
         let in_check = self.in_check(self.side_to_move());
 
