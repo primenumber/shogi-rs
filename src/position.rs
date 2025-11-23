@@ -803,6 +803,142 @@ impl StateInfo {
 
         format!("{} {} {} {}", board, color, hand, self.ply)
     }
+
+    /// Parses SFEN board representation and updates the board state.
+    fn parse_sfen_board(&mut self, s: &str) -> Result<(), SfenError> {
+        let rows = s.split('/');
+
+        self.occupied_bb = Bitboard::empty();
+        self.color_bb = Default::default();
+        self.type_bb = Default::default();
+
+        for (i, row) in rows.enumerate() {
+            if i >= 9 {
+                return Err(SfenError::IllegalBoardState);
+            }
+
+            let mut j = 0;
+
+            let mut is_promoted = false;
+            for c in row.chars() {
+                match c {
+                    '+' => {
+                        is_promoted = true;
+                    }
+                    n if n.is_ascii_digit() => {
+                        if let Some(n) = n.to_digit(10) {
+                            for _ in 0..n {
+                                if j >= 9 {
+                                    return Err(SfenError::IllegalBoardState);
+                                }
+
+                                let sq = Square::new(8 - j, i as u8).unwrap();
+                                self.set_piece(sq, None);
+
+                                j += 1;
+                            }
+                        }
+                    }
+                    s => match Piece::from_sfen(s) {
+                        Some(mut piece) => {
+                            if j >= 9 {
+                                return Err(SfenError::IllegalBoardState);
+                            }
+
+                            if is_promoted {
+                                if let Some(promoted) = piece.piece_type.promote() {
+                                    piece.piece_type = promoted;
+                                } else {
+                                    return Err(SfenError::IllegalPieceType);
+                                }
+                            }
+
+                            let sq = Square::new(8 - j, i as u8).unwrap();
+                            self.set_piece(sq, Some(piece));
+                            self.occupied_bb |= sq;
+                            self.color_bb[piece.color.index()] |= sq;
+                            self.type_bb[piece.piece_type.index()] |= sq;
+                            j += 1;
+
+                            is_promoted = false;
+                        }
+                        None => return Err(SfenError::IllegalPieceType),
+                    },
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parses SFEN side-to-move field and updates the state.
+    fn parse_sfen_stm(&mut self, s: &str) -> Result<(), SfenError> {
+        self.side_to_move = match s {
+            "b" => Color::Black,
+            "w" => Color::White,
+            _ => return Err(SfenError::IllegalSideToMove),
+        };
+        Ok(())
+    }
+
+    /// Parses SFEN hand pieces field and updates the hand.
+    fn parse_sfen_hand(&mut self, s: &str) -> Result<(), SfenError> {
+        if s == "-" {
+            self.hand.clear();
+            return Ok(());
+        }
+
+        let mut num_pieces: u8 = 0;
+        for c in s.chars() {
+            match c {
+                n if n.is_ascii_digit() => {
+                    if let Some(n) = n.to_digit(10) {
+                        num_pieces = num_pieces * 10 + (n as u8);
+                    }
+                }
+                s => {
+                    match Piece::from_sfen(s) {
+                        Some(p) => self.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
+                        None => return Err(SfenError::IllegalPieceType),
+                    };
+                    num_pieces = 0;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parses SFEN ply field and updates the ply count.
+    fn parse_sfen_ply(&mut self, s: &str) -> Result<(), SfenError> {
+        self.ply = s.parse()?;
+        Ok(())
+    }
+
+    /// Sets the state from SFEN string (without move history).
+    /// This parses only the first 4 fields: board, side-to-move, hand, ply.
+    pub fn set_sfen(&mut self, sfen_str: &str) -> Result<(), SfenError> {
+        let mut parts = sfen_str.split_whitespace();
+
+        parts
+            .next()
+            .ok_or(SfenError::MissingDataFields)
+            .and_then(|s| self.parse_sfen_board(s))?;
+        parts
+            .next()
+            .ok_or(SfenError::MissingDataFields)
+            .and_then(|s| self.parse_sfen_stm(s))?;
+        parts
+            .next()
+            .ok_or(SfenError::MissingDataFields)
+            .and_then(|s| self.parse_sfen_hand(s))?;
+        parts
+            .next()
+            .ok_or(SfenError::MissingDataFields)
+            .and_then(|s| self.parse_sfen_ply(s))?;
+
+        Ok(())
+    }
 }
 
 /// Represents a state of the game (board state + history).
@@ -1242,31 +1378,24 @@ impl Position {
 
     /// Parses the given SFEN string and updates the game state.
     pub fn set_sfen(&mut self, sfen_str: &str) -> Result<(), SfenError> {
-        let mut parts = sfen_str.split_whitespace();
+        let mut parts = sfen_str.split_whitespace().peekable();
 
-        // Build the initial position, all parts are required.
-        parts
-            .next()
-            .ok_or(SfenError::MissingDataFields)
-            .and_then(|s| self.parse_sfen_board(s))?;
-        parts
-            .next()
-            .ok_or(SfenError::MissingDataFields)
-            .and_then(|s| self.parse_sfen_stm(s))?;
-        parts
-            .next()
-            .ok_or(SfenError::MissingDataFields)
-            .and_then(|s| self.parse_sfen_hand(s))?;
-        parts
-            .next()
-            .ok_or(SfenError::MissingDataFields)
-            .and_then(|s| self.parse_sfen_ply(s))?;
+        // Build the initial position from the first 4 fields
+        let state_sfen = parts
+            .by_ref()
+            .take_while(|&s| s != "moves")
+            .take(4)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        self.state.set_sfen(&state_sfen)?;
 
         self.position_history.clear();
         self.log_position();
 
         // Make moves following the initial position, optional.
-        if let Some("moves") = parts.next() {
+        if parts.peek() == Some(&"moves") {
+            parts.next(); // consume "moves"
             for m in parts {
                 if let Some(m) = Move::from_sfen(m) {
                     // Stop if any error occurrs.
@@ -1303,113 +1432,6 @@ impl Position {
         }
 
         sfen
-    }
-
-    fn parse_sfen_board(&mut self, s: &str) -> Result<(), SfenError> {
-        let rows = s.split('/');
-
-        self.state.occupied_bb = Bitboard::empty();
-        self.state.color_bb = Default::default();
-        self.state.type_bb = Default::default();
-
-        for (i, row) in rows.enumerate() {
-            if i >= 9 {
-                return Err(SfenError::IllegalBoardState);
-            }
-
-            let mut j = 0;
-
-            let mut is_promoted = false;
-            for c in row.chars() {
-                match c {
-                    '+' => {
-                        is_promoted = true;
-                    }
-                    n if n.is_ascii_digit() => {
-                        if let Some(n) = n.to_digit(10) {
-                            for _ in 0..n {
-                                if j >= 9 {
-                                    return Err(SfenError::IllegalBoardState);
-                                }
-
-                                let sq = Square::new(8 - j, i as u8).unwrap();
-                                self.set_piece(sq, None);
-
-                                j += 1;
-                            }
-                        }
-                    }
-                    s => match Piece::from_sfen(s) {
-                        Some(mut piece) => {
-                            if j >= 9 {
-                                return Err(SfenError::IllegalBoardState);
-                            }
-
-                            if is_promoted {
-                                if let Some(promoted) = piece.piece_type.promote() {
-                                    piece.piece_type = promoted;
-                                } else {
-                                    return Err(SfenError::IllegalPieceType);
-                                }
-                            }
-
-                            let sq = Square::new(8 - j, i as u8).unwrap();
-                            self.set_piece(sq, Some(piece));
-                            self.state.occupied_bb |= sq;
-                            self.state.color_bb[piece.color.index()] |= sq;
-                            self.state.type_bb[piece.piece_type.index()] |= sq;
-                            j += 1;
-
-                            is_promoted = false;
-                        }
-                        None => return Err(SfenError::IllegalPieceType),
-                    },
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn parse_sfen_stm(&mut self, s: &str) -> Result<(), SfenError> {
-        self.state.side_to_move = match s {
-            "b" => Color::Black,
-            "w" => Color::White,
-            _ => return Err(SfenError::IllegalSideToMove),
-        };
-        Ok(())
-    }
-
-    fn parse_sfen_hand(&mut self, s: &str) -> Result<(), SfenError> {
-        if s == "-" {
-            self.state.hand.clear();
-            return Ok(());
-        }
-
-        let mut num_pieces: u8 = 0;
-        for c in s.chars() {
-            match c {
-                n if n.is_ascii_digit() => {
-                    if let Some(n) = n.to_digit(10) {
-                        num_pieces = num_pieces * 10 + (n as u8);
-                    }
-                }
-                s => {
-                    match Piece::from_sfen(s) {
-                        Some(p) => self.state.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
-                        None => return Err(SfenError::IllegalPieceType),
-                    };
-                    num_pieces = 0;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn parse_sfen_ply(&mut self, s: &str) -> Result<(), SfenError> {
-        self.state.ply = s.parse()?;
-        Ok(())
     }
 }
 
