@@ -69,11 +69,7 @@ impl StateInfo {
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
         let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
-        if bb.is_any() {
-            Some(bb.pop())
-        } else {
-            None
-        }
+        if bb.is_any() { Some(bb.pop()) } else { None }
     }
 
     /// Sets a piece at the given square.
@@ -198,20 +194,18 @@ impl StateInfo {
             return false;
         }
 
-        point += PieceType::iter()
-            .filter(|pt| pt.is_hand_piece())
-            .fold(0, |acc, pt| {
-                let num = self.hand.get(Piece {
-                    piece_type: pt,
-                    color: c,
-                });
-                let pp = match pt {
-                    PieceType::Rook | PieceType::Bishop => 5,
-                    _ => 1,
-                };
-
-                acc + num * pp
+        point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
+            let num = self.hand.get(Piece {
+                piece_type: pt,
+                color: c,
             });
+            let pp = match pt {
+                PieceType::Rook | PieceType::Bishop => 5,
+                _ => 1,
+            };
+
+            acc + num * pp
+        });
 
         let lowerbound = match c {
             Color::Black => 28,
@@ -256,11 +250,7 @@ impl StateInfo {
             })
             .join("/");
 
-        let color = if self.side_to_move == Color::Black {
-            "b"
-        } else {
-            "w"
-        };
+        let color = if self.side_to_move == Color::Black { "b" } else { "w" };
 
         let mut hand = [Color::Black, Color::White]
             .iter()
@@ -701,5 +691,226 @@ impl Default for StateInfo {
             color_bb: Default::default(),
             type_bb: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::square::consts::*;
+
+    fn setup() {
+        BBFactory::init();
+    }
+
+    #[test]
+    fn in_check() {
+        setup();
+
+        let test_cases = [
+            (
+                "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+                false,
+                false,
+            ),
+            ("9/3r5/9/9/6B2/9/9/9/3K5 b P 1", true, false),
+            (
+                "ln2r1knl/2gb1+Rg2/4Pp1p1/p1pp1sp1p/1N2pN1P1/2P2PP2/PP1G1S2R/1SG6/LK6L w 2PSp 1",
+                false,
+                true,
+            ),
+            (
+                "lnsg1gsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSG1GSNL b - 1",
+                false,
+                false,
+            ),
+        ];
+
+        let mut state = StateInfo::default();
+        for case in test_cases.iter() {
+            state.set_sfen(case.0).expect("failed to parse SFEN string");
+            assert_eq!(case.1, state.in_check(Color::Black));
+            assert_eq!(case.2, state.in_check(Color::White));
+        }
+    }
+
+    #[test]
+    fn find_king() {
+        setup();
+
+        let test_cases = [
+            (
+                "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+                Some(SQ_5I),
+                Some(SQ_5A),
+            ),
+            ("9/3r5/9/9/6B2/9/9/9/3K5 b P 1", Some(SQ_6I), None),
+            (
+                "ln2r1knl/2gb1+Rg2/4Pp1p1/p1pp1sp1p/1N2pN1P1/2P2PP2/PP1G1S2R/1SG6/LK6L w 2PSp 1",
+                Some(SQ_8I),
+                Some(SQ_3A),
+            ),
+            (
+                "lnsg1gsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSG1GSNL b - 1",
+                None,
+                None,
+            ),
+        ];
+
+        let mut state = StateInfo::default();
+        for case in test_cases.iter() {
+            state.set_sfen(case.0).expect("failed to parse SFEN string");
+            assert_eq!(case.1, state.find_king(Color::Black));
+            assert_eq!(case.2, state.find_king(Color::White));
+        }
+    }
+
+    #[test]
+    fn player_bb() {
+        setup();
+
+        let cases: &[(&str, &[Square], &[Square])] = &[
+            (
+                "R6gk/9/8p/9/4p4/9/9/8L/B8 b - 1",
+                &[SQ_9A, SQ_1H, SQ_9I],
+                &[SQ_2A, SQ_1A, SQ_1C, SQ_5E],
+            ),
+            ("9/3r5/9/9/6B2/9/9/9/3K5 b P 1", &[SQ_3E, SQ_6I], &[SQ_6B]),
+        ];
+
+        let mut state = StateInfo::default();
+        for case in cases {
+            state.set_sfen(case.0).expect("failed to parse SFEN string");
+            let black = state.player_bb(Color::Black);
+            let white = state.player_bb(Color::White);
+
+            assert_eq!(case.1.len(), black.count() as usize);
+            for sq in case.1 {
+                assert!((black & *sq).is_any());
+            }
+
+            assert_eq!(case.2.len(), white.count() as usize);
+            for sq in case.2 {
+                assert!((white & *sq).is_any());
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_bb() {
+        setup();
+
+        let cases: &[(&str, &[Square], &[Square])] =
+            &[("R6gk/9/8p/9/4p4/9/9/8L/B8 b - 1", &[], &[SQ_2A, SQ_1C, SQ_5E])];
+
+        let mut state = StateInfo::default();
+        for case in cases {
+            state.set_sfen(case.0).expect("failed to parse SFEN string");
+            let black = state.pinned_bb(Color::Black);
+            let white = state.pinned_bb(Color::White);
+
+            assert_eq!(case.1.len(), black.count());
+            for sq in case.1 {
+                assert!((&black & *sq).is_any());
+            }
+
+            assert_eq!(case.2.len(), white.count());
+            for sq in case.2 {
+                assert!((&white & *sq).is_any());
+            }
+        }
+    }
+
+    #[test]
+    fn move_candidates() {
+        setup();
+
+        let mut state = StateInfo::default();
+        state
+            .set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
+            .expect("failed to parse SFEN string");
+
+        let mut sum = 0;
+        for sq in Square::iter() {
+            let pc = state.piece_at(sq);
+
+            if let Some(pc) = *pc {
+                if pc.color == state.side_to_move() {
+                    sum += state.move_candidates(sq, pc).count();
+                }
+            }
+        }
+
+        assert_eq!(30, sum);
+    }
+
+    #[test]
+    fn try_declare_winning() {
+        setup();
+
+        let mut state = StateInfo::default();
+
+        state
+            .set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen("1K7/+NG+N+NGG3/P+S+P+P+PS3/9/7s1/9/+b+rppp+p+s1+p/3+p1+bk2/9 b R4L7Pgnp 1")
+            .expect("failed to parse SFEN string");
+        assert!(state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen(
+                "1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/3+b4P/4+p+p+bs1/+r1s4+lk/1g1g3+r1 w \
+                 Gns2l11p 1",
+            )
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen(
+                "1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/3+b4P/4+p+p+bs1/+r1s4+lk/1g1g3+r1 b \
+                 Gns2l11p 1",
+            )
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen(
+                "1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/3+b4P/4+p+p+bs1/+r1s4+l1/1g1g3+r1 b \
+                 Gns2l11p 1",
+            )
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen(
+                "1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/1k1+b4P/4+p+p+bs1/+r1s4+l1/1g1g3+r1 b \
+                 Gns2l11p 1",
+            )
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen(
+                "1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/3+b4P/4+p+p+bs1/+r1s4+lk/1g1g3+rG w \
+                 ns2l11p 1",
+            )
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
+
+        state
+            .set_sfen("1K6l/1+N7/+PG2+Ns1p1/2+N5p/6p2/3+b4P/5+p+bs1/+r1s4+lk/1g1g3+rG w ns2l12p 1")
+            .expect("failed to parse SFEN string");
+        assert!(!state.try_declare_winning(Color::Black));
+        assert!(!state.try_declare_winning(Color::White));
     }
 }

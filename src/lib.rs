@@ -35,6 +35,7 @@ pub mod color;
 pub mod error;
 pub mod hand;
 pub mod moves;
+pub mod packed_state_info;
 pub mod piece;
 pub mod piece_type;
 pub mod position;
