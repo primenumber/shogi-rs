@@ -939,6 +939,203 @@ impl StateInfo {
 
         Ok(())
     }
+
+    /// Makes a normal move (not a drop). Updates the board state and validates the move.
+    /// Does NOT update position history or check for repetition.
+    pub(crate) fn make_normal_move(
+        &mut self,
+        from: Square,
+        to: Square,
+        promoted: bool,
+    ) -> Result<MoveRecord, MoveError> {
+        let stm = self.side_to_move;
+        let opponent = stm.flip();
+
+        let moved = self.piece_at(from).ok_or(MoveError::Inconsistent("No piece found"))?;
+
+        let captured = *self.piece_at(to);
+
+        if moved.color != stm {
+            return Err(MoveError::Inconsistent("The piece is not for the side to move"));
+        }
+
+        if promoted && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
+            return Err(MoveError::Inconsistent("The piece cannot promote"));
+        }
+
+        if !self.move_candidates(from, moved).any(|sq| sq == to) {
+            return Err(MoveError::Inconsistent("The piece cannot move to there"));
+        }
+
+        if !promoted && !moved.is_placeable_at(to) {
+            return Err(MoveError::NonMovablePiece);
+        }
+
+        let placed = if promoted {
+            match moved.promote() {
+                Some(promoted) => promoted,
+                None => return Err(MoveError::Inconsistent("This type of piece cannot promote")),
+            }
+        } else {
+            moved
+        };
+
+        self.set_piece(from, None);
+        self.set_piece(to, Some(placed));
+        self.occupied_bb ^= from;
+        self.occupied_bb ^= to;
+        self.type_bb[moved.piece_type.index()] ^= from;
+        self.type_bb[placed.piece_type.index()] ^= to;
+        self.color_bb[moved.color.index()] ^= from;
+        self.color_bb[placed.color.index()] ^= to;
+
+        if let Some(ref cap) = captured {
+            self.occupied_bb ^= to;
+            self.type_bb[cap.piece_type.index()] ^= to;
+            self.color_bb[cap.color.index()] ^= to;
+            let pc = cap.flip();
+            let pc = match pc.unpromote() {
+                Some(unpromoted) => unpromoted,
+                None => pc,
+            };
+            self.hand.increment(pc);
+        }
+
+        if self.in_check(stm) {
+            // Undo the move.
+            self.set_piece(from, Some(moved));
+            self.set_piece(to, captured);
+            self.occupied_bb ^= from;
+            self.occupied_bb ^= to;
+            self.type_bb[moved.piece_type.index()] ^= from;
+            self.type_bb[placed.piece_type.index()] ^= to;
+            self.color_bb[moved.color.index()] ^= from;
+            self.color_bb[placed.color.index()] ^= to;
+
+            if let Some(ref cap) = captured {
+                self.occupied_bb ^= to;
+                self.type_bb[cap.piece_type.index()] ^= to;
+                self.color_bb[cap.color.index()] ^= to;
+                let pc = cap.flip();
+                let pc = match pc.unpromote() {
+                    Some(unpromoted) => unpromoted,
+                    None => pc,
+                };
+                self.hand.decrement(pc);
+            }
+
+            return Err(MoveError::InCheck);
+        }
+
+        self.side_to_move = opponent;
+        self.ply += 1;
+
+        Ok(MoveRecord::Normal {
+            from,
+            to,
+            placed,
+            captured,
+            promoted,
+        })
+    }
+
+    /// Makes a drop move. Updates the board state and validates the move.
+    /// Does NOT update position history or check for repetition.
+    pub(crate) fn make_drop_move(&mut self, to: Square, pt: PieceType) -> Result<MoveRecord, MoveError> {
+        let stm = self.side_to_move;
+        let opponent = stm.flip();
+
+        if self.piece_at(to).is_some() {
+            return Err(MoveError::Inconsistent("There is already a piece in `to`"));
+        }
+
+        let pc = Piece {
+            piece_type: pt,
+            color: stm,
+        };
+
+        if self.hand.get(pc) == 0 {
+            return Err(MoveError::Inconsistent("The piece is not in the hand"));
+        }
+
+        if !pc.is_placeable_at(to) {
+            return Err(MoveError::NonMovablePiece);
+        }
+
+        if pc.piece_type == PieceType::Pawn {
+            // Nifu check.
+            for i in 0..9 {
+                if let Some(fp) = *self.piece_at(Square::new(to.file(), i).unwrap()) {
+                    if fp == pc {
+                        return Err(MoveError::Nifu);
+                    }
+                }
+            }
+
+            // Uchifuzume check.
+            if let Some(king_sq) = to.shift(0, if stm == Color::Black { -1 } else { 1 }) {
+                // Is the dropped pawn attacking the opponent's king?
+                if let Some(
+                    pc @ Piece {
+                        piece_type: PieceType::King,
+                        ..
+                    },
+                ) = *self.piece_at(king_sq)
+                {
+                    if pc.color == opponent {
+                        // can any opponent's piece attack the dropped pawn?
+                        let pinned = self.pinned_bb(opponent);
+
+                        let not_attacked = PieceType::iter()
+                            .filter(|&pt| pt != PieceType::King)
+                            .flat_map(|pt| self.get_attackers_of_type(pt, to, opponent))
+                            .all(|sq| (&pinned & sq).is_any());
+
+                        if not_attacked {
+                            // the dropped pawn may block bishop's moves
+                            self.occupied_bb ^= to;
+                            // can the opponent's king evade?
+                            let is_attacked = |sq| {
+                                if let Some(pc) = *self.piece_at(sq) {
+                                    if pc.color == opponent {
+                                        return true;
+                                    }
+                                }
+
+                                self.is_attacked_by(sq, stm)
+                            };
+                            let uchifuzume = self.move_candidates(king_sq, pc).all(is_attacked);
+                            self.occupied_bb ^= to;
+
+                            if uchifuzume {
+                                return Err(MoveError::Uchifuzume);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.set_piece(to, Some(pc));
+        self.occupied_bb ^= to;
+        self.type_bb[pc.piece_type.index()] ^= to;
+        self.color_bb[pc.color.index()] ^= to;
+
+        if self.in_check(stm) {
+            // Undo the move.
+            self.set_piece(to, None);
+            self.occupied_bb ^= to;
+            self.type_bb[pc.piece_type.index()] ^= to;
+            self.color_bb[pc.color.index()] ^= to;
+            return Err(MoveError::InCheck);
+        }
+
+        self.hand.decrement(pc);
+        self.side_to_move = opponent;
+        self.ply += 1;
+
+        Ok(MoveRecord::Drop { to, piece: pc })
+    }
 }
 
 /// Represents a state of the game (board state + history).
@@ -1071,197 +1268,17 @@ impl Position {
     }
 
     fn make_normal_move(&mut self, from: Square, to: Square, promoted: bool) -> Result<MoveRecord, MoveError> {
-        let stm = self.side_to_move();
-        let opponent = stm.flip();
-
-        let moved = self.piece_at(from).ok_or(MoveError::Inconsistent("No piece found"))?;
-
-        let captured = *self.piece_at(to);
-
-        if moved.color != stm {
-            return Err(MoveError::Inconsistent("The piece is not for the side to move"));
-        }
-
-        if promoted && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
-            return Err(MoveError::Inconsistent("The piece cannot promote"));
-        }
-
-        if !self.move_candidates(from, moved).any(|sq| sq == to) {
-            return Err(MoveError::Inconsistent("The piece cannot move to there"));
-        }
-
-        if !promoted && !moved.is_placeable_at(to) {
-            return Err(MoveError::NonMovablePiece);
-        }
-
-        let placed = if promoted {
-            match moved.promote() {
-                Some(promoted) => promoted,
-                None => return Err(MoveError::Inconsistent("This type of piece cannot promote")),
-            }
-        } else {
-            moved
-        };
-
-        self.set_piece(from, None);
-        self.set_piece(to, Some(placed));
-        self.state.occupied_bb ^= from;
-        self.state.occupied_bb ^= to;
-        self.state.type_bb[moved.piece_type.index()] ^= from;
-        self.state.type_bb[placed.piece_type.index()] ^= to;
-        self.state.color_bb[moved.color.index()] ^= from;
-        self.state.color_bb[placed.color.index()] ^= to;
-
-        if let Some(ref cap) = captured {
-            self.state.occupied_bb ^= to;
-            self.state.type_bb[cap.piece_type.index()] ^= to;
-            self.state.color_bb[cap.color.index()] ^= to;
-            let pc = cap.flip();
-            let pc = match pc.unpromote() {
-                Some(unpromoted) => unpromoted,
-                None => pc,
-            };
-            self.state.hand.increment(pc);
-        }
-
-        if self.in_check(stm) {
-            // Undo-ing the move.
-            self.set_piece(from, Some(moved));
-            self.set_piece(to, captured);
-            self.state.occupied_bb ^= from;
-            self.state.occupied_bb ^= to;
-            self.state.type_bb[moved.piece_type.index()] ^= from;
-            self.state.type_bb[placed.piece_type.index()] ^= to;
-            self.state.color_bb[moved.color.index()] ^= from;
-            self.state.color_bb[placed.color.index()] ^= to;
-
-            if let Some(ref cap) = captured {
-                self.state.occupied_bb ^= to;
-                self.state.type_bb[cap.piece_type.index()] ^= to;
-                self.state.color_bb[cap.color.index()] ^= to;
-                let pc = cap.flip();
-                let pc = match pc.unpromote() {
-                    Some(unpromoted) => unpromoted,
-                    None => pc,
-                };
-                self.state.hand.decrement(pc);
-            }
-
-            return Err(MoveError::InCheck);
-        }
-
-        self.state.side_to_move = opponent;
-        self.state.ply += 1;
-
+        let record = self.state.make_normal_move(from, to, promoted)?;
         self.log_position();
         self.detect_repetition()?;
-
-        Ok(MoveRecord::Normal {
-            from,
-            to,
-            placed,
-            captured,
-            promoted,
-        })
+        Ok(record)
     }
 
     fn make_drop_move(&mut self, to: Square, pt: PieceType) -> Result<MoveRecord, MoveError> {
-        let stm = self.side_to_move();
-        let opponent = stm.flip();
-
-        if self.piece_at(to).is_some() {
-            return Err(MoveError::Inconsistent("There is already a piece in `to`"));
-        }
-
-        let pc = Piece {
-            piece_type: pt,
-            color: stm,
-        };
-
-        if self.hand(pc) == 0 {
-            return Err(MoveError::Inconsistent("The piece is not in the hand"));
-        }
-
-        if !pc.is_placeable_at(to) {
-            return Err(MoveError::NonMovablePiece);
-        }
-
-        if pc.piece_type == PieceType::Pawn {
-            // Nifu check.
-            for i in 0..9 {
-                if let Some(fp) = *self.piece_at(Square::new(to.file(), i).unwrap()) {
-                    if fp == pc {
-                        return Err(MoveError::Nifu);
-                    }
-                }
-            }
-
-            // Uchifuzume check.
-            if let Some(king_sq) = to.shift(0, if stm == Color::Black { -1 } else { 1 }) {
-                // Is the dropped pawn attacking the opponent's king?
-                if let Some(
-                    pc @ Piece {
-                        piece_type: PieceType::King,
-                        ..
-                    },
-                ) = *self.piece_at(king_sq)
-                {
-                    if pc.color == opponent {
-                        // can any opponent's piece attack the dropped pawn?
-                        let pinned = self.pinned_bb(opponent);
-
-                        let not_attacked = PieceType::iter()
-                            .filter(|&pt| pt != PieceType::King)
-                            .flat_map(|pt| self.state.get_attackers_of_type(pt, to, opponent))
-                            .all(|sq| (&pinned & sq).is_any());
-
-                        if not_attacked {
-                            // the dropped pawn may block bishop's moves
-                            self.state.occupied_bb ^= to;
-                            // can the opponent's king evade?
-                            let is_attacked = |sq| {
-                                if let Some(pc) = *self.piece_at(sq) {
-                                    if pc.color == opponent {
-                                        return true;
-                                    }
-                                }
-
-                                self.state.is_attacked_by(sq, stm)
-                            };
-                            let uchifuzume = self.move_candidates(king_sq, pc).all(is_attacked);
-                            self.state.occupied_bb ^= to;
-
-                            if uchifuzume {
-                                return Err(MoveError::Uchifuzume);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        self.set_piece(to, Some(pc));
-        self.state.occupied_bb ^= to;
-        self.state.type_bb[pc.piece_type.index()] ^= to;
-        self.state.color_bb[pc.color.index()] ^= to;
-
-        if self.in_check(stm) {
-            // Undo-ing the move.
-            self.set_piece(to, None);
-            self.state.occupied_bb ^= to;
-            self.state.type_bb[pc.piece_type.index()] ^= to;
-            self.state.color_bb[pc.color.index()] ^= to;
-            return Err(MoveError::InCheck);
-        }
-
-        self.state.hand.decrement(pc);
-        self.state.side_to_move = opponent;
-        self.state.ply += 1;
-
+        let record = self.state.make_drop_move(to, pt)?;
         self.log_position();
         self.detect_repetition()?;
-
-        Ok(MoveRecord::Drop { to, piece: pc })
+        Ok(record)
     }
 
     /// Returns a list of squares at which a piece of the given color is pinned.
