@@ -526,7 +526,7 @@ impl SerializedPosition {
         if let Some(packed) = PackedPosition::from_position::<true>(pos) {
             SerializedPosition::Packed(packed)
         } else {
-            SerializedPosition::FallbackedSfen(pos.generate_sfen().split(" ").take(3).join(" "))
+            SerializedPosition::FallbackedSfen(pos.state.generate_sfen().split(" ").take(3).join(" "))
         }
     }
 
@@ -545,7 +545,9 @@ impl SerializedPosition {
 
     fn to_position_sfen(&self) -> String {
         match self {
-            SerializedPosition::Packed(packed) => packed.to_position(1).generate_sfen().split(" ").take(3).join(" "),
+            SerializedPosition::Packed(packed) => {
+                packed.to_position(1).state.generate_sfen().split(" ").take(3).join(" ")
+            }
             SerializedPosition::FallbackedSfen(sfen) => sfen.clone(),
         }
     }
@@ -745,6 +747,67 @@ impl StateInfo {
         }
 
         true
+    }
+
+    /// Generates SFEN string representing the current board state.
+    pub fn generate_sfen(&self) -> String {
+        let board = (0..9)
+            .map(|row| {
+                let mut s = String::new();
+                let mut num_spaces = 0;
+                for file in (0..9).rev() {
+                    match *self.piece_at(Square::new(file, row).unwrap()) {
+                        Some(pc) => {
+                            if num_spaces > 0 {
+                                s.push_str(&num_spaces.to_string());
+                                num_spaces = 0;
+                            }
+
+                            s.push_str(&pc.to_string());
+                        }
+                        None => num_spaces += 1,
+                    }
+                }
+
+                if num_spaces > 0 {
+                    s.push_str(&num_spaces.to_string());
+                }
+
+                s
+            })
+            .join("/");
+
+        let color = if self.side_to_move == Color::Black { "b" } else { "w" };
+
+        let mut hand = [Color::Black, Color::White]
+            .iter()
+            .map(|c| {
+                PieceType::iter()
+                    .filter(|pt| pt.is_hand_piece())
+                    .map(|pt| {
+                        let pc = Piece {
+                            piece_type: pt,
+                            color: *c,
+                        };
+                        let n = self.hand.get(pc);
+
+                        if n == 0 {
+                            "".to_string()
+                        } else if n == 1 {
+                            format!("{pc}")
+                        } else {
+                            format!("{n}{pc}")
+                        }
+                    })
+                    .join("")
+            })
+            .join("");
+
+        if hand.is_empty() {
+            hand = "-".to_string();
+        }
+
+        format!("{} {} {} {}", board, color, hand, self.ply)
     }
 }
 
@@ -1231,7 +1294,7 @@ impl Position {
     /// Converts the current state into SFEN formatted string.
     pub fn to_sfen(&self) -> String {
         if self.position_history.is_empty() {
-            return self.generate_sfen();
+            return self.state.generate_sfen();
         }
 
         let initial_sfen = self.position_history.first().unwrap().0.to_position_sfen();
@@ -1353,70 +1416,6 @@ impl Position {
     fn parse_sfen_ply(&mut self, s: &str) -> Result<(), SfenError> {
         self.state.ply = s.parse()?;
         Ok(())
-    }
-
-    fn generate_sfen(&self) -> String {
-        let board = (0..9)
-            .map(|row| {
-                let mut s = String::new();
-                let mut num_spaces = 0;
-                for file in (0..9).rev() {
-                    match *self.piece_at(Square::new(file, row).unwrap()) {
-                        Some(pc) => {
-                            if num_spaces > 0 {
-                                s.push_str(&num_spaces.to_string());
-                                num_spaces = 0;
-                            }
-
-                            s.push_str(&pc.to_string());
-                        }
-                        None => num_spaces += 1,
-                    }
-                }
-
-                if num_spaces > 0 {
-                    s.push_str(&num_spaces.to_string());
-                }
-
-                s
-            })
-            .join("/");
-
-        let color = if self.state.side_to_move == Color::Black {
-            "b"
-        } else {
-            "w"
-        };
-
-        let mut hand = [Color::Black, Color::White]
-            .iter()
-            .map(|c| {
-                PieceType::iter()
-                    .filter(|pt| pt.is_hand_piece())
-                    .map(|pt| {
-                        let pc = Piece {
-                            piece_type: pt,
-                            color: *c,
-                        };
-                        let n = self.state.hand.get(pc);
-
-                        if n == 0 {
-                            "".to_string()
-                        } else if n == 1 {
-                            format!("{pc}")
-                        } else {
-                            format!("{n}{pc}")
-                        }
-                    })
-                    .join("")
-            })
-            .join("");
-
-        if hand.is_empty() {
-            hand = "-".to_string();
-        }
-
-        format!("{} {} {} {}", board, color, hand, self.state.ply)
     }
 }
 
