@@ -119,17 +119,17 @@ impl PackedStateInfo {
     // piece types are packed in the order of
     // Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
     fn packed_hand_colors(state: &StateInfo) -> u64 {
+        // the order is reversed
         [
-            PieceType::Pawn,
-            PieceType::Lance,
-            PieceType::Knight,
-            PieceType::Silver,
-            PieceType::Gold,
-            PieceType::Bishop,
             PieceType::Rook,
+            PieceType::Bishop,
+            PieceType::Gold,
+            PieceType::Silver,
+            PieceType::Knight,
+            PieceType::Lance,
+            PieceType::Pawn,
         ]
         .iter()
-        .rev()
         .fold(0u64, |mut accum, &pt| {
             let num_black = state.hand.get(Piece {
                 piece_type: pt,
