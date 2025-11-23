@@ -563,6 +563,191 @@ pub struct StateInfo {
     pub(crate) type_bb: [Bitboard; 14],
 }
 
+impl StateInfo {
+    /// Returns a piece at the given square.
+    pub fn piece_at(&self, sq: Square) -> &Option<Piece> {
+        self.board.get(sq)
+    }
+
+    /// Returns a bitboard containing pieces of the given player.
+    pub fn player_bb(&self, c: Color) -> &Bitboard {
+        &self.color_bb[c.index()]
+    }
+
+    /// Returns the number of the given piece in hand.
+    pub fn hand(&self, p: Piece) -> u8 {
+        self.hand.get(p)
+    }
+
+    /// Returns the side to make a move next.
+    pub fn side_to_move(&self) -> Color {
+        self.side_to_move
+    }
+
+    /// Returns the number of plies already completed by the current state.
+    pub fn ply(&self) -> u16 {
+        self.ply
+    }
+
+    /// Returns the position of the king with the given color.
+    pub fn find_king(&self, c: Color) -> Option<Square> {
+        let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
+        if bb.is_any() { Some(bb.pop()) } else { None }
+    }
+
+    /// Sets a piece at the given square.
+    pub(crate) fn set_piece(&mut self, sq: Square, p: Option<Piece>) {
+        self.board.set(sq, p);
+    }
+
+    /// Checks if the king with the given color is in check.
+    pub fn in_check(&self, c: Color) -> bool {
+        if let Some(king_sq) = self.find_king(c) {
+            self.is_attacked_by(king_sq, c.flip())
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn is_attacked_by(&self, sq: Square, c: Color) -> bool {
+        PieceType::iter().any(|pt| self.get_attackers_of_type(pt, sq, c).is_any())
+    }
+
+    pub(crate) fn get_attackers_of_type(&self, pt: PieceType, sq: Square, c: Color) -> Bitboard {
+        let bb = &self.type_bb[pt.index()] & &self.color_bb[c.index()];
+
+        if bb.is_empty() {
+            return bb;
+        }
+
+        let attack_pc = Piece {
+            piece_type: pt,
+            color: c,
+        };
+
+        &bb & &self.move_candidates(sq, attack_pc.flip())
+    }
+
+    /// Returns a list of squares to where the given piece at the given square can move.
+    pub fn move_candidates(&self, sq: Square, p: Piece) -> Bitboard {
+        let bb = match p.piece_type {
+            PieceType::Rook => BBFactory::rook_attack(sq, &self.occupied_bb),
+            PieceType::Bishop => BBFactory::bishop_attack(sq, &self.occupied_bb),
+            PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.occupied_bb),
+            PieceType::ProRook => {
+                &BBFactory::rook_attack(sq, &self.occupied_bb) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+            }
+            PieceType::ProBishop => {
+                &BBFactory::bishop_attack(sq, &self.occupied_bb)
+                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+            }
+            PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
+                BBFactory::attacks_from(PieceType::Gold, p.color, sq)
+            }
+            pt => BBFactory::attacks_from(pt, p.color, sq),
+        };
+
+        &bb & &!&self.color_bb[p.color.index()]
+    }
+
+    /// Returns a list of squares at which a piece of the given color is pinned.
+    pub fn pinned_bb(&self, c: Color) -> Bitboard {
+        let ksq = self.find_king(c);
+        if ksq.is_none() {
+            return Bitboard::empty();
+        }
+        let ksq = ksq.unwrap();
+
+        [
+            (PieceType::Rook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProRook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::Bishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProBishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::Lance, BBFactory::lance_attack(c, ksq, &Bitboard::empty())),
+        ]
+        .iter()
+        .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
+            let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.flip().index()]) & mask;
+
+            for psq in bb {
+                let between = &BBFactory::between(ksq, psq) & &self.occupied_bb;
+                if between.count() == 1 && (&between & &self.color_bb[c.index()]).is_any() {
+                    accum |= &between;
+                }
+            }
+
+            accum
+        })
+    }
+
+    /// Checks if a player with the given color can declare winning.
+    ///
+    /// See [the section 25 in 世界コンピュータ将棋選手権 大会ルール][csa] for more detail.
+    ///
+    /// [csa]: http://www2.computer-shogi.org/wcsc26/rule.pdf#page=9
+    pub fn try_declare_winning(&self, c: Color) -> bool {
+        if c != self.side_to_move {
+            return false;
+        }
+
+        let king_pos = self.find_king(c);
+        if king_pos.is_none() {
+            return false;
+        }
+
+        let king_pos = king_pos.unwrap();
+        if king_pos.relative_rank(c) >= 3 {
+            return false;
+        }
+
+        let (mut point, count) = PieceType::iter()
+            .filter(|&pt| pt != PieceType::King)
+            .fold((0, 0), |accum, pt| {
+                let unit = match pt {
+                    PieceType::Rook | PieceType::Bishop | PieceType::ProRook | PieceType::ProBishop => 5,
+                    _ => 1,
+                };
+
+                let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()]) & &BBFactory::promote_zone(c);
+                let count = bb.count() as u8;
+                let point = count * unit;
+
+                (accum.0 + point, accum.1 + count)
+            });
+
+        if count < 10 {
+            return false;
+        }
+
+        point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
+            let num = self.hand.get(Piece {
+                piece_type: pt,
+                color: c,
+            });
+            let pp = match pt {
+                PieceType::Rook | PieceType::Bishop => 5,
+                _ => 1,
+            };
+
+            acc + num * pp
+        });
+
+        let lowerbound = match c {
+            Color::Black => 28,
+            Color::White => 27,
+        };
+        if point < lowerbound {
+            return false;
+        }
+
+        if self.in_check(c) {
+            return false;
+        }
+
+        true
+    }
+}
+
 /// Represents a state of the game (board state + history).
 ///
 /// # Examples
@@ -604,27 +789,27 @@ impl Position {
 
     /// Returns a piece at the given square.
     pub fn piece_at(&self, sq: Square) -> &Option<Piece> {
-        self.state.board.get(sq)
+        self.state.piece_at(sq)
     }
 
     /// Returns a bitboard containing pieces of the given player.
     pub fn player_bb(&self, c: Color) -> &Bitboard {
-        &self.state.color_bb[c.index()]
+        self.state.player_bb(c)
     }
 
     /// Returns the number of the given piece in hand.
     pub fn hand(&self, p: Piece) -> u8 {
-        self.state.hand.get(p)
+        self.state.hand(p)
     }
 
     /// Returns the side to make a move next.
     pub fn side_to_move(&self) -> Color {
-        self.state.side_to_move
+        self.state.side_to_move()
     }
 
     /// Returns the number of plies already completed by the current state.
     pub fn ply(&self) -> u16 {
-        self.state.ply
+        self.state.ply()
     }
 
     /// Returns a history of all moves made since the beginning of the game.
@@ -638,105 +823,22 @@ impl Position {
     ///
     /// [csa]: http://www2.computer-shogi.org/wcsc26/rule.pdf#page=9
     pub fn try_declare_winning(&self, c: Color) -> bool {
-        if c != self.state.side_to_move {
-            return false;
-        }
-
-        let king_pos = self.find_king(c);
-        if king_pos.is_none() {
-            return false;
-        }
-
-        let king_pos = king_pos.unwrap();
-        if king_pos.relative_rank(c) >= 3 {
-            return false;
-        }
-
-        let (mut point, count) = PieceType::iter()
-            .filter(|&pt| pt != PieceType::King)
-            .fold((0, 0), |accum, pt| {
-                let unit = match pt {
-                    PieceType::Rook | PieceType::Bishop | PieceType::ProRook | PieceType::ProBishop => 5,
-                    _ => 1,
-                };
-
-                let bb =
-                    &(&self.state.type_bb[pt.index()] & &self.state.color_bb[c.index()]) & &BBFactory::promote_zone(c);
-                let count = bb.count() as u8;
-                let point = count * unit;
-
-                (accum.0 + point, accum.1 + count)
-            });
-
-        if count < 10 {
-            return false;
-        }
-
-        point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
-            let num = self.state.hand.get(Piece {
-                piece_type: pt,
-                color: c,
-            });
-            let pp = match pt {
-                PieceType::Rook | PieceType::Bishop => 5,
-                _ => 1,
-            };
-
-            acc + num * pp
-        });
-
-        let lowerbound = match c {
-            Color::Black => 28,
-            Color::White => 27,
-        };
-        if point < lowerbound {
-            return false;
-        }
-
-        if self.in_check(c) {
-            return false;
-        }
-
-        true
+        self.state.try_declare_winning(c)
     }
 
     /// Checks if the king with the given color is in check.
     pub fn in_check(&self, c: Color) -> bool {
-        if let Some(king_sq) = self.find_king(c) {
-            self.is_attacked_by(king_sq, c.flip())
-        } else {
-            false
-        }
+        self.state.in_check(c)
     }
 
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
-        let mut bb = &self.state.type_bb[PieceType::King.index()] & &self.state.color_bb[c.index()];
-        if bb.is_any() { Some(bb.pop()) } else { None }
+        self.state.find_king(c)
     }
 
     /// Sets a piece at the given square.
     fn set_piece(&mut self, sq: Square, p: Option<Piece>) {
-        self.state.board.set(sq, p);
-    }
-
-    fn is_attacked_by(&self, sq: Square, c: Color) -> bool {
-        PieceType::iter().any(|pt| self.get_attackers_of_type(pt, sq, c).is_any())
-    }
-
-    fn get_attackers_of_type(&self, pt: PieceType, sq: Square, c: Color) -> Bitboard {
-        let bb = &self.state.type_bb[pt.index()] & &self.state.color_bb[c.index()];
-
-        if bb.is_empty() {
-            return bb;
-        }
-
-        let attack_pc = Piece {
-            piece_type: pt,
-            color: c,
-        };
-
-        &bb & &self.move_candidates(sq, attack_pc.flip())
+        self.state.set_piece(sq, p);
     }
 
     fn log_position(&mut self) {
@@ -917,7 +1019,7 @@ impl Position {
 
                         let not_attacked = PieceType::iter()
                             .filter(|&pt| pt != PieceType::King)
-                            .flat_map(|pt| self.get_attackers_of_type(pt, to, opponent))
+                            .flat_map(|pt| self.state.get_attackers_of_type(pt, to, opponent))
                             .all(|sq| (&pinned & sq).is_any());
 
                         if not_attacked {
@@ -931,7 +1033,7 @@ impl Position {
                                     }
                                 }
 
-                                self.is_attacked_by(sq, stm)
+                                self.state.is_attacked_by(sq, stm)
                             };
                             let uchifuzume = self.move_candidates(king_sq, pc).all(is_attacked);
                             self.state.occupied_bb ^= to;
@@ -971,32 +1073,7 @@ impl Position {
 
     /// Returns a list of squares at which a piece of the given color is pinned.
     pub fn pinned_bb(&self, c: Color) -> Bitboard {
-        let ksq = self.find_king(c);
-        if ksq.is_none() {
-            return Bitboard::empty();
-        }
-        let ksq = ksq.unwrap();
-
-        [
-            (PieceType::Rook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
-            (PieceType::ProRook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
-            (PieceType::Bishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
-            (PieceType::ProBishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
-            (PieceType::Lance, BBFactory::lance_attack(c, ksq, &Bitboard::empty())),
-        ]
-        .iter()
-        .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
-            let bb = &(&self.state.type_bb[pt.index()] & &self.state.color_bb[c.flip().index()]) & mask;
-
-            for psq in bb {
-                let between = &BBFactory::between(ksq, psq) & &self.state.occupied_bb;
-                if between.count() == 1 && (&between & &self.state.color_bb[c.index()]).is_any() {
-                    accum |= &between;
-                }
-            }
-
-            accum
-        })
+        self.state.pinned_bb(c)
     }
 
     /// Undoes the last move.
@@ -1070,25 +1147,7 @@ impl Position {
 
     /// Returns a list of squares to where the given piece at the given square can move.
     pub fn move_candidates(&self, sq: Square, p: Piece) -> Bitboard {
-        let bb = match p.piece_type {
-            PieceType::Rook => BBFactory::rook_attack(sq, &self.state.occupied_bb),
-            PieceType::Bishop => BBFactory::bishop_attack(sq, &self.state.occupied_bb),
-            PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.state.occupied_bb),
-            PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, &self.state.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
-            }
-            PieceType::ProBishop => {
-                &BBFactory::bishop_attack(sq, &self.state.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
-            }
-            PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
-                BBFactory::attacks_from(PieceType::Gold, p.color, sq)
-            }
-            pt => BBFactory::attacks_from(pt, p.color, sq),
-        };
-
-        &bb & &!&self.state.color_bb[p.color.index()]
+        self.state.move_candidates(sq, p)
     }
 
     fn detect_repetition(&self) -> Result<(), MoveError> {
