@@ -92,11 +92,25 @@ pub struct PackedStateInfo([u64; 4]);
 
 impl PackedStateInfo {
     fn pack_by_occupied(state: &StateInfo) -> [u64; 14] {
-        PieceType::iter()
-            .map(|pt| state.type_bb[pt.index()].pext_u64(&state.occupied_bb))
-            .collect_vec()
-            .try_into()
-            .unwrap()
+        [
+            PieceType::King,
+            PieceType::Rook,
+            PieceType::Bishop,
+            PieceType::Gold,
+            PieceType::Silver,
+            PieceType::Knight,
+            PieceType::Lance,
+            PieceType::Pawn,
+            PieceType::ProRook,
+            PieceType::ProBishop,
+            PieceType::ProSilver,
+            PieceType::ProKnight,
+            PieceType::ProLance,
+            PieceType::ProPawn,
+        ]
+        .map(|pt| state.type_bb[pt.index()].pext_u64(&state.occupied_bb))
+        .try_into()
+        .unwrap()
     }
 
     // Pack hand pieces' colors into bits.
