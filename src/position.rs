@@ -1136,6 +1136,69 @@ impl StateInfo {
 
         Ok(MoveRecord::Drop { to, piece: pc })
     }
+
+    /// Undoes a move given its MoveRecord. Updates the board state.
+    /// Does NOT update position history.
+    pub(crate) fn unmake_move(&mut self, record: MoveRecord) -> Result<(), MoveError> {
+        match record {
+            MoveRecord::Normal {
+                from,
+                to,
+                ref placed,
+                ref captured,
+                promoted,
+            } => {
+                if self.piece_at(from).is_some() {
+                    return Err(MoveError::Inconsistent("`from` of the move is filled by another piece"));
+                }
+
+                let moved = if promoted {
+                    match placed.unpromote() {
+                        Some(unpromoted) => unpromoted,
+                        None => return Err(MoveError::Inconsistent("Cannot unpromoted the piece")),
+                    }
+                } else {
+                    *placed
+                };
+                if *self.piece_at(to) != Some(*placed) {
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
+                }
+
+                self.set_piece(from, Some(moved));
+                self.set_piece(to, *captured);
+                self.occupied_bb ^= from;
+                self.occupied_bb ^= to;
+                self.type_bb[moved.piece_type.index()] ^= from;
+                self.type_bb[placed.piece_type.index()] ^= to;
+                self.color_bb[moved.color.index()] ^= from;
+                self.color_bb[placed.color.index()] ^= to;
+
+                if let Some(ref cap) = *captured {
+                    self.occupied_bb ^= to;
+                    self.type_bb[cap.piece_type.index()] ^= to;
+                    self.color_bb[cap.color.index()] ^= to;
+                    let unpromoted_cap = cap.unpromote().unwrap_or(*cap);
+                    self.hand.decrement(unpromoted_cap.flip());
+                }
+            }
+            MoveRecord::Drop { to, piece } => {
+                if *self.piece_at(to) != Some(piece) {
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
+                }
+
+                self.set_piece(to, None);
+                self.occupied_bb ^= to;
+                self.type_bb[piece.piece_type.index()] ^= to;
+                self.color_bb[piece.color.index()] ^= to;
+                self.hand.increment(piece);
+            }
+        };
+
+        self.side_to_move = self.side_to_move.flip();
+        self.ply -= 1;
+
+        Ok(())
+    }
 }
 
 /// Represents a state of the game (board state + history).
@@ -1293,63 +1356,8 @@ impl Position {
             return Ok(());
         }
 
-        let last = self.move_history.pop().unwrap();
-        match last {
-            MoveRecord::Normal {
-                from,
-                to,
-                ref placed,
-                ref captured,
-                promoted,
-            } => {
-                if self.piece_at(from).is_some() {
-                    return Err(MoveError::Inconsistent("`from` of the move is filled by another piece"));
-                }
-
-                let moved = if promoted {
-                    match placed.unpromote() {
-                        Some(unpromoted) => unpromoted,
-                        None => return Err(MoveError::Inconsistent("Cannot unpromoted the piece")),
-                    }
-                } else {
-                    *placed
-                };
-                if *self.piece_at(to) != Some(*placed) {
-                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
-                }
-
-                self.set_piece(from, Some(moved));
-                self.set_piece(to, *captured);
-                self.state.occupied_bb ^= from;
-                self.state.occupied_bb ^= to;
-                self.state.type_bb[moved.piece_type.index()] ^= from;
-                self.state.type_bb[placed.piece_type.index()] ^= to;
-                self.state.color_bb[moved.color.index()] ^= from;
-                self.state.color_bb[placed.color.index()] ^= to;
-
-                if let Some(ref cap) = *captured {
-                    self.state.occupied_bb ^= to;
-                    self.state.type_bb[cap.piece_type.index()] ^= to;
-                    self.state.color_bb[cap.color.index()] ^= to;
-                    let unpromoted_cap = cap.unpromote().unwrap_or(*cap);
-                    self.state.hand.decrement(unpromoted_cap.flip());
-                }
-            }
-            MoveRecord::Drop { to, piece } => {
-                if *self.piece_at(to) != Some(piece) {
-                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
-                }
-
-                self.set_piece(to, None);
-                self.state.occupied_bb ^= to;
-                self.state.type_bb[piece.piece_type.index()] ^= to;
-                self.state.color_bb[piece.color.index()] ^= to;
-                self.state.hand.increment(piece);
-            }
-        };
-
-        self.state.side_to_move = self.state.side_to_move.flip();
-        self.state.ply -= 1;
+        let record = self.move_history.pop().unwrap();
+        self.state.unmake_move(record)?;
         self.position_history.pop();
 
         Ok(())
