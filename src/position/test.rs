@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::*;
-use crate::position::BBFactory;
+use crate::bitboard::Factory as BBFactory;
 use crate::square::consts::*;
 
 fn setup() {

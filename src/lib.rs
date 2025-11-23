@@ -39,6 +39,7 @@ pub mod piece;
 pub mod piece_type;
 pub mod position;
 pub mod square;
+pub mod state_info;
 pub mod time;
 
 pub use self::bitboard::Bitboard;
@@ -48,6 +49,7 @@ pub use self::hand::Hand;
 pub use self::moves::Move;
 pub use self::piece::Piece;
 pub use self::piece_type::PieceType;
-pub use self::position::{MoveRecord, Position, StateInfo};
+pub use self::position::{MoveRecord, Position};
 pub use self::square::Square;
+pub use self::state_info::StateInfo;
 pub use self::time::TimeControl;
