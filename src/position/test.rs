@@ -798,17 +798,17 @@ fn packed_position_roundtrip() {
             .set_sfen(sfen)
             .unwrap_or_else(|_| panic!("failed to parse SFEN at case #{i}"));
 
-        // Pack the position
-        let serialized = SerializedPosition::from_position(&original_pos);
+        // Pack the state
+        let serialized = SerializedStateInfo::from_state_info(&original_pos.state);
 
-        // Unpack the position
-        let restored_pos = serialized.to_position(1);
+        // Unpack the state
+        let restored_state = serialized.to_state_info(1);
 
         // Verify board pieces match
         for sq in Square::iter() {
             assert_eq!(
                 original_pos.piece_at(sq),
-                restored_pos.piece_at(sq),
+                restored_state.piece_at(sq),
                 "piece mismatch at {sq} in case #{i} (SFEN: {sfen})"
             );
         }
@@ -822,7 +822,7 @@ fn packed_position_roundtrip() {
                 };
                 assert_eq!(
                     original_pos.hand(piece),
-                    restored_pos.hand(piece),
+                    restored_state.hand(piece),
                     "hand mismatch for {piece:?} in case #{i} (SFEN: {sfen})"
                 );
             }
@@ -831,19 +831,19 @@ fn packed_position_roundtrip() {
         // Verify side to move matches
         assert_eq!(
             original_pos.side_to_move(),
-            restored_pos.side_to_move(),
+            restored_state.side_to_move(),
             "side_to_move mismatch in case #{i} (SFEN: {sfen})"
         );
 
         // Verify bitboards match
         assert_eq!(
-            original_pos.state.occupied_bb, restored_pos.state.occupied_bb,
+            original_pos.state.occupied_bb, restored_state.occupied_bb,
             "occupied_bb mismatch in case #{i} (SFEN: {sfen})"
         );
         for c in [Color::Black, Color::White] {
             assert_eq!(
                 original_pos.player_bb(c),
-                restored_pos.player_bb(c),
+                restored_state.player_bb(c),
                 "color_bb[{c:?}] mismatch in case #{i} (SFEN: {sfen})"
             );
         }

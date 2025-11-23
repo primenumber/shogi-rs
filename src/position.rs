@@ -110,12 +110,12 @@ impl fmt::Debug for PieceGrid {
 // bits[0..(N-1)]: color of pieces on board except kings (N = occupied_bb.count() - 2)
 // bits[(N)..]: color of pieces in hand (rest bits)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PackedPosition([u64; 4]);
+pub struct PackedStateInfo([u64; 4]);
 
-impl PackedPosition {
-    fn pack_by_occupied(pos: &Position) -> [u64; 14] {
+impl PackedStateInfo {
+    fn pack_by_occupied(state: &StateInfo) -> [u64; 14] {
         PieceType::iter()
-            .map(|pt| pos.state.type_bb[pt.index()].pext_u64(&pos.state.occupied_bb))
+            .map(|pt| state.type_bb[pt.index()].pext_u64(&state.occupied_bb))
             .collect_vec()
             .try_into()
             .unwrap()
@@ -126,7 +126,7 @@ impl PackedPosition {
     // num_black bits are set to 1, and num_white bits are set to 0.
     // piece types are packed in the order of
     // Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
-    fn packed_hand_colors(pos: &Position) -> u64 {
+    fn packed_hand_colors(state: &StateInfo) -> u64 {
         [
             PieceType::Pawn,
             PieceType::Lance,
@@ -139,11 +139,11 @@ impl PackedPosition {
         .iter()
         .rev()
         .fold(0u64, |mut accum, &pt| {
-            let num_black = pos.state.hand.get(Piece {
+            let num_black = state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::Black,
             }) as u64;
-            let num_white = pos.state.hand.get(Piece {
+            let num_white = state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::White,
             }) as u64;
@@ -376,8 +376,8 @@ impl PackedPosition {
         (color_packed_board, color_packed_hand)
     }
 
-    // Unpack the PackedPosition into Position.
-    pub fn to_position(&self, ply: u16) -> Position {
+    // Unpack the PackedStateInfo into StateInfo.
+    pub fn to_state_info(&self, ply: u16) -> StateInfo {
         // Extract occupied bitboard
         let (occupied_bb, count, side_to_move) = self.decode_occupied();
         let (board_pieces, hand_counts) = self.decode_pieces();
@@ -389,44 +389,40 @@ impl PackedPosition {
             .map(|packed| Bitboard::new(packed, 0).pdep(&occupied_bb))
             .try_into()
             .unwrap();
-        let board = PackedPosition::type_bb_to_piece_grid(&type_bb, &color_bb);
-        let hand = PackedPosition::counts_to_hand(hand_counts, color_packed_hand);
+        let board = PackedStateInfo::type_bb_to_piece_grid(&type_bb, &color_bb);
+        let hand = PackedStateInfo::counts_to_hand(hand_counts, color_packed_hand);
 
-        Position {
-            state: StateInfo {
-                board: board,
-                hand,
-                ply,
-                side_to_move,
-                occupied_bb,
-                color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
-                type_bb,
-            },
-            move_history: Vec::new(),
-            position_history: vec![(SerializedPosition::Packed(*self), 0)],
+        StateInfo {
+            board: board,
+            hand,
+            ply,
+            side_to_move,
+            occupied_bb,
+            color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
+            type_bb,
         }
     }
 
-    fn num_pieces(pos: &Position, pt: PieceType) -> u32 {
-        let on_board = pos.state.type_bb[pt.index()].count() as u32;
+    fn num_pieces(state: &StateInfo, pt: PieceType) -> u32 {
+        let on_board = state.type_bb[pt.index()].count() as u32;
         let on_board_promoted = pt
             .promote()
-            .map_or(0, |promoted_pt| pos.state.type_bb[promoted_pt.index()].count() as u32);
-        let in_hand = pos.state.hand.get(Piece {
+            .map_or(0, |promoted_pt| state.type_bb[promoted_pt.index()].count() as u32);
+        let in_hand = state.hand.get(Piece {
             piece_type: pt,
             color: Color::Black,
         }) as u32
-            + pos.state.hand.get(Piece {
+            + state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::White,
             }) as u32;
         on_board + on_board_promoted + in_hand
     }
 
-    // Pack the given Position into PackedPosition.
-    pub fn from_position<const VALIDATE: bool>(pos: &Position) -> Option<PackedPosition> {
+    // Pack the given StateInfo into PackedStateInfo.
+    pub fn from_state_info<const VALIDATE: bool>(state: &StateInfo) -> Option<PackedStateInfo> {
         if VALIDATE {
-            if pos.state.occupied_bb.count() > 40 {
+            if state.occupied_bb.count() > 40 {
                 return None;
             }
             let pt_and_counts = [
@@ -439,7 +435,7 @@ impl PackedPosition {
                 (PieceType::Rook, 2),
             ];
             for (pt, expected_count) in pt_and_counts.iter() {
-                let count = PackedPosition::num_pieces(pos, *pt);
+                let count = PackedStateInfo::num_pieces(state, *pt);
                 if count != *expected_count {
                     return None;
                 }
@@ -447,15 +443,15 @@ impl PackedPosition {
         }
 
         let mut data = [0u64; 4];
-        let mut occupied_low = pos.state.occupied_bb.low();
-        let mut occupied_high = pos.state.occupied_bb.high();
-        if pos.state.side_to_move == Color::White {
+        let mut occupied_low = state.occupied_bb.low();
+        let mut occupied_high = state.occupied_bb.high();
+        if state.side_to_move == Color::White {
             occupied_low = !occupied_low & 0x7fffffff_ffffffff; // 63bits
             occupied_high = !occupied_high & 0x00000000_0003ffff; // 18bits
         }
-        let black_king_index = pos.find_king(Color::Black).map(|sq| sq.index() as u8)?;
-        let white_king_index = pos.find_king(Color::White).map(|sq| sq.index() as u8)?;
-        let packed_bb = PackedPosition::pack_by_occupied(pos);
+        let black_king_index = state.find_king(Color::Black).map(|sq| sq.index() as u8)?;
+        let white_king_index = state.find_king(Color::White).map(|sq| sq.index() as u8)?;
+        let packed_bb = PackedStateInfo::pack_by_occupied(state);
 
         // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
         // order bits of the result
@@ -487,12 +483,12 @@ impl PackedPosition {
         let kbr_packed = king_packed | bishop_or_rook;
         let kbrsg_packed = kbr_packed | silver_or_gold;
 
-        let color_packed_board = pos.state.color_bb[Color::Black.index()]
-            .pext_u64(&pos.state.occupied_bb)
+        let color_packed_board = state.color_bb[Color::Black.index()]
+            .pext_u64(&state.occupied_bb)
             .pext(!king_packed);
-        let color_packed_hand = PackedPosition::packed_hand_colors(pos);
-        let color_packed = color_packed_board
-            | (color_packed_hand << (pos.state.occupied_bb.count() as u32 - king_packed.count_ones()));
+        let color_packed_hand = PackedStateInfo::packed_hand_colors(state);
+        let color_packed =
+            color_packed_board | (color_packed_hand << (state.occupied_bb.count() as u32 - king_packed.count_ones()));
 
         data[0] = occupied_low;
         if black_king_index < white_king_index {
@@ -511,44 +507,42 @@ impl PackedPosition {
         data[3] = promoted_packed;
         data[3] |= lance_or_knight.pext(!pawn_packed) << 34;
         data[3] |= lance_packed.pext(lance_or_knight) << 56;
-        Some(PackedPosition(data))
+        Some(PackedStateInfo(data))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SerializedPosition {
-    Packed(PackedPosition),
+enum SerializedStateInfo {
+    Packed(PackedStateInfo),
     FallbackedSfen(String),
 }
 
-impl SerializedPosition {
-    fn from_position(pos: &Position) -> SerializedPosition {
-        if let Some(packed) = PackedPosition::from_position::<true>(pos) {
-            SerializedPosition::Packed(packed)
+impl SerializedStateInfo {
+    fn from_state_info(state: &StateInfo) -> SerializedStateInfo {
+        if let Some(packed) = PackedStateInfo::from_state_info::<true>(state) {
+            SerializedStateInfo::Packed(packed)
         } else {
-            SerializedPosition::FallbackedSfen(pos.state.generate_sfen().split(" ").take(3).join(" "))
+            SerializedStateInfo::FallbackedSfen(state.generate_sfen().split(" ").take(3).join(" "))
         }
     }
 
     #[allow(dead_code)]
-    fn to_position(&self, ply: u16) -> Position {
+    fn to_state_info(&self, ply: u16) -> StateInfo {
         match self {
-            SerializedPosition::Packed(packed) => packed.to_position(ply),
-            SerializedPosition::FallbackedSfen(sfen) => {
+            SerializedStateInfo::Packed(packed) => packed.to_state_info(ply),
+            SerializedStateInfo::FallbackedSfen(sfen) => {
                 let mut pos = Position::new();
                 pos.set_sfen(sfen).unwrap();
                 pos.state.ply = ply;
-                pos
+                pos.state
             }
         }
     }
 
-    fn to_position_sfen(&self) -> String {
+    fn to_sfen(&self) -> String {
         match self {
-            SerializedPosition::Packed(packed) => {
-                packed.to_position(1).state.generate_sfen().split(" ").take(3).join(" ")
-            }
-            SerializedPosition::FallbackedSfen(sfen) => sfen.clone(),
+            SerializedStateInfo::Packed(packed) => packed.to_state_info(1).generate_sfen().split(" ").take(3).join(" "),
+            SerializedStateInfo::FallbackedSfen(sfen) => sfen.clone(),
         }
     }
 }
@@ -833,7 +827,7 @@ impl StateInfo {
 pub struct Position {
     pub(crate) state: StateInfo,
     move_history: Vec<MoveRecord>,
-    position_history: Vec<(SerializedPosition, u16)>,
+    position_history: Vec<(SerializedStateInfo, u16)>,
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -907,7 +901,7 @@ impl Position {
     fn log_position(&mut self) {
         // TODO: SFEN string is used to represent a state of position, but any transformation which uniquely distinguish positions can be used here.
         // Consider light-weight option if generating SFEN string for each move is time-consuming.
-        let serialized_position = SerializedPosition::from_position(self);
+        let serialized_position = SerializedStateInfo::from_state_info(&self.state);
         let in_check = self.in_check(self.side_to_move());
 
         let continuous_check = if in_check {
@@ -1297,7 +1291,7 @@ impl Position {
             return self.state.generate_sfen();
         }
 
-        let initial_sfen = self.position_history.first().unwrap().0.to_position_sfen();
+        let initial_sfen = self.position_history.first().unwrap().0.to_sfen();
         if self.move_history.is_empty() {
             return format!("{} {}", initial_sfen, self.ply());
         }
