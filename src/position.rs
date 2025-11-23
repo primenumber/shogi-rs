@@ -531,10 +531,10 @@ impl SerializedStateInfo {
         match self {
             SerializedStateInfo::Packed(packed) => packed.to_state_info(ply),
             SerializedStateInfo::FallbackedSfen(sfen) => {
-                let mut pos = Position::new();
-                pos.set_sfen(sfen).unwrap();
-                pos.state.ply = ply;
-                pos.state
+                let mut state = StateInfo::default();
+                state.set_sfen(sfen).unwrap();
+                state.ply = ply;
+                state
             }
         }
     }
