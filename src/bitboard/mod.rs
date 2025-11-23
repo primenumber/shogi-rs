@@ -341,11 +341,7 @@ impl iter::Iterator for Bitboard {
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.is_any() {
-            Some(self.pop())
-        } else {
-            None
-        }
+        if self.is_any() { Some(self.pop()) } else { None }
     }
 }
 

@@ -41,9 +41,7 @@ impl Square {
             return None;
         }
 
-        Some(Square {
-            inner: file * 9 + rank,
-        })
+        Some(Square { inner: file * 9 + rank })
     }
 
     /// Creates a new instance of `Square` from SFEN formatted string.
@@ -62,14 +60,9 @@ impl Square {
         let file = bytes[0] - ASCII_1;
         let rank = bytes[1] - ASCII_LOWER_A;
 
-        debug_assert!(
-            file < 9 && rank < 9,
-            "{s} parsed as (file: {file}, rank: {rank})"
-        );
+        debug_assert!(file < 9 && rank < 9, "{s} parsed as (file: {file}, rank: {rank})");
 
-        Some(Square {
-            inner: file * 9 + rank,
-        })
+        Some(Square { inner: file * 9 + rank })
     }
 
     /// Creates a new instance of `Square` with the given index value.
@@ -244,13 +237,7 @@ mod tests {
 
     #[test]
     fn from_sfen() {
-        let ok_cases = [
-            ("9a", 8, 0),
-            ("1a", 0, 0),
-            ("5e", 4, 4),
-            ("9i", 8, 8),
-            ("1i", 0, 8),
-        ];
+        let ok_cases = [("9a", 8, 0), ("1a", 0, 0), ("5e", 4, 4), ("9i", 8, 8), ("1i", 0, 8)];
         let ng_cases = ["", "9j", "_a", "a9", "9 ", " a", "9", "foo"];
 
         for case in ok_cases.iter() {
@@ -261,10 +248,7 @@ mod tests {
         }
 
         for case in ng_cases.iter() {
-            assert!(
-                Square::from_sfen(case).is_none(),
-                "{case} should cause an error"
-            );
+            assert!(Square::from_sfen(case).is_none(), "{case} should cause an error");
         }
     }
 
@@ -279,13 +263,7 @@ mod tests {
 
     #[test]
     fn to_sfen() {
-        let cases = [
-            ("9a", 8, 0),
-            ("1a", 0, 0),
-            ("5e", 4, 4),
-            ("9i", 8, 8),
-            ("1i", 0, 8),
-        ];
+        let cases = [("9a", 8, 0), ("1a", 0, 0), ("5e", 4, 4), ("9i", 8, 8), ("1i", 0, 8)];
 
         for case in cases.iter() {
             let sq = Square::new(case.1, case.2).unwrap();

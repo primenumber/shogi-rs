@@ -1,7 +1,7 @@
+use bitintr::{Pdep, Pext};
 use itertools::Itertools;
 use std::fmt;
 use std::fmt::Write as _;
-use bitintr::{Pext, Pdep};
 
 use crate::bitboard::Factory as BBFactory;
 use crate::{Bitboard, Color, Hand, Move, MoveError, Piece, PieceType, SfenError, Square};
@@ -28,9 +28,9 @@ impl MoveRecord {
     /// Converts the move into SFEN formatted string.
     pub fn to_sfen(&self) -> String {
         match *self {
-            MoveRecord::Normal {
-                from, to, promoted, ..
-            } => format!("{}{}{}", from, to, if promoted { "+" } else { "" }),
+            MoveRecord::Normal { from, to, promoted, .. } => {
+                format!("{}{}{}", from, to, if promoted { "+" } else { "" })
+            }
             MoveRecord::Drop {
                 to,
                 piece: Piece { piece_type, .. },
@@ -160,17 +160,23 @@ impl PackedPosition {
             let mut white_bb = bb & &!color_bb;
             while black_bb.is_any() {
                 let sq = black_bb.pop();
-                board.set(sq, Some(Piece {
-                    piece_type: pt,
-                    color: Color::Black,
-                }));
+                board.set(
+                    sq,
+                    Some(Piece {
+                        piece_type: pt,
+                        color: Color::Black,
+                    }),
+                );
             }
             while white_bb.is_any() {
                 let sq = white_bb.pop();
-                board.set(sq, Some(Piece {
-                    piece_type: pt,
-                    color: Color::White,
-                }));
+                board.set(
+                    sq,
+                    Some(Piece {
+                        piece_type: pt,
+                        color: Color::White,
+                    }),
+                );
             }
         }
         board
@@ -187,25 +193,40 @@ impl PackedPosition {
             PieceType::Rook,
         ];
         let mut hand = Hand::default();
-        counts.iter().zip(PIECE_TYPES.iter()).fold(colors, |color_packed_hand, (&count, &pt)| {
-            let bits = color_packed_hand & ((1u64 << count) - 1);
-            let num_black = bits.count_ones() as u8;
-            let num_white = count as u8 - num_black;
-            if num_black > 0 {
-                hand.set(Piece { piece_type: pt, color: Color::Black }, num_black);
-            }
-            if num_white > 0 {
-                hand.set(Piece { piece_type: pt, color: Color::White }, num_white);
-            }
-            color_packed_hand >> count
-        });
+        counts
+            .iter()
+            .zip(PIECE_TYPES.iter())
+            .fold(colors, |color_packed_hand, (&count, &pt)| {
+                let bits = color_packed_hand & ((1u64 << count) - 1);
+                let num_black = bits.count_ones() as u8;
+                let num_white = count as u8 - num_black;
+                if num_black > 0 {
+                    hand.set(
+                        Piece {
+                            piece_type: pt,
+                            color: Color::Black,
+                        },
+                        num_black,
+                    );
+                }
+                if num_white > 0 {
+                    hand.set(
+                        Piece {
+                            piece_type: pt,
+                            color: Color::White,
+                        },
+                        num_white,
+                    );
+                }
+                color_packed_hand >> count
+            });
         hand
     }
 
     fn decode_bishop_rook(&self) -> (u64, u64) {
         let bishop_or_rook_packed = (self.0[2] >> 54) & 0x3f; // 6 bits
         let bishop_packed = (self.0[2] >> 60) & 0x0f; // 4 bits
-                                                           //
+        //
         let rook_packed = (!bishop_packed).pdep(bishop_or_rook_packed);
         let bishop_packed = bishop_packed.pdep(bishop_or_rook_packed);
 
@@ -215,7 +236,7 @@ impl PackedPosition {
     fn decode_lance_kinght(&self) -> (u64, u64) {
         let lance_packed = (self.0[3] >> 56) & 0xff; // 8 bits
         let lance_or_knight_packed = (self.0[3] >> 34) & 0x3fffff; // 22 bits
-                                                                        //
+        //
         let knight_packed = (!lance_packed).pdep(lance_or_knight_packed);
         let lance_packed = lance_packed.pdep(lance_or_knight_packed);
 
@@ -250,7 +271,7 @@ impl PackedPosition {
         let (silver_packed, gold_packed) = self.decode_silver_gold();
         let lance_or_knight_packed = (self.0[3] >> 34) & 0x3fffff; // 22 bits
         let kbrsg_packed = !lance_or_knight_packed & 0x3fffff; // 22 bits
-                                                                    //
+        //
         let king_packed = king_packed.pdep(kbrsg_packed);
         let bishop_packed = bishop_packed.pdep(kbrsg_packed);
         let rook_packed = rook_packed.pdep(kbrsg_packed);
@@ -261,8 +282,7 @@ impl PackedPosition {
     }
 
     fn decode_non_pawn_pieces(&self) -> [u64; 7] {
-        let (king_packed, bishop_packed, rook_packed, silver_packed, gold_packed) =
-            self.decode_kbrgs();
+        let (king_packed, bishop_packed, rook_packed, silver_packed, gold_packed) = self.decode_kbrgs();
         let (lance_packed, knight_packed) = self.decode_lance_kinght();
         let non_pawn_packed = !self.0[2] & 0x0000_00ff_ffff_ffff; // 40 bits
 
@@ -292,31 +312,33 @@ impl PackedPosition {
 
         let pawn_packed = self.0[2] & 0x0000_00ff_ffff_ffff; // 40 bits
 
-        ([
-            king_packed,
-            rook_packed & !promoted_packed,
-            bishop_packed & !promoted_packed,
-            gold_packed,
-            silver_packed & !promoted_packed,
-            knight_packed & !promoted_packed,
-            lance_packed & !promoted_packed,
-            pawn_packed & !promoted_packed,
-            rook_packed & promoted_packed,
-            bishop_packed & promoted_packed,
-            silver_packed & promoted_packed,
-            knight_packed & promoted_packed,
-            lance_packed & promoted_packed,
-            pawn_packed & promoted_packed,
-        ],
-        [
-            18 - pawn_packed.count_ones() as u8,
-            4 - lance_packed.count_ones() as u8,
-            4 - knight_packed.count_ones() as u8,
-            4 - silver_packed.count_ones() as u8,
-            4 - gold_packed.count_ones() as u8,
-            2 - bishop_packed.count_ones() as u8,
-            2 - rook_packed.count_ones() as u8,
-        ])
+        (
+            [
+                king_packed,
+                rook_packed & !promoted_packed,
+                bishop_packed & !promoted_packed,
+                gold_packed,
+                silver_packed & !promoted_packed,
+                knight_packed & !promoted_packed,
+                lance_packed & !promoted_packed,
+                pawn_packed & !promoted_packed,
+                rook_packed & promoted_packed,
+                bishop_packed & promoted_packed,
+                silver_packed & promoted_packed,
+                knight_packed & promoted_packed,
+                lance_packed & promoted_packed,
+                pawn_packed & promoted_packed,
+            ],
+            [
+                18 - pawn_packed.count_ones() as u8,
+                4 - lance_packed.count_ones() as u8,
+                4 - knight_packed.count_ones() as u8,
+                4 - silver_packed.count_ones() as u8,
+                4 - gold_packed.count_ones() as u8,
+                2 - bishop_packed.count_ones() as u8,
+                2 - rook_packed.count_ones() as u8,
+            ],
+        )
     }
 
     fn decode_occupied(&self) -> (Bitboard, u32, Color) {
@@ -327,7 +349,7 @@ impl PackedPosition {
         if count > 40 {
             let occupied_low = !occupied_low & 0x7fff_ffff_ffff_ffff; // 63 bits
             let occupied_high = !occupied_high & 0x0000_0000_0003_ffff; // 18 bits
-            let count  = occupied_low.count_ones() + occupied_high.count_ones();
+            let count = occupied_low.count_ones() + occupied_high.count_ones();
             let occupied_bb = Bitboard::new(occupied_low, occupied_high);
             (occupied_bb, count, Color::White)
         } else {
@@ -363,12 +385,12 @@ impl PackedPosition {
 
         // Reconstruct pieces on board
         let color_bb = Bitboard::new(color_packed_board, 0).pdep(&occupied_bb);
-        let type_bb = board_pieces.map(|packed| Bitboard::new(packed, 0).pdep(&occupied_bb)).try_into().unwrap();
+        let type_bb = board_pieces
+            .map(|packed| Bitboard::new(packed, 0).pdep(&occupied_bb))
+            .try_into()
+            .unwrap();
         let board = PackedPosition::type_bb_to_piece_grid(&type_bb, &color_bb);
-        let hand = PackedPosition::counts_to_hand(
-            hand_counts,
-            color_packed_hand,
-        );
+        let hand = PackedPosition::counts_to_hand(hand_counts, color_packed_hand);
 
         Position {
             board: board,
@@ -378,17 +400,16 @@ impl PackedPosition {
             move_history: Vec::new(),
             position_history: vec![(SerializedPosition::Packed(*self), 0)],
             occupied_bb,
-            color_bb: [
-                color_bb.clone(),
-                (&occupied_bb & &!&color_bb),
-            ],
+            color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
             type_bb,
         }
     }
 
     fn num_pieces(pos: &Position, pt: PieceType) -> u32 {
         let on_board = pos.type_bb[pt.index()].count() as u32;
-        let on_board_promoted = pt.promote().map_or(0, |promoted_pt| pos.type_bb[promoted_pt.index()].count() as u32);
+        let on_board_promoted = pt
+            .promote()
+            .map_or(0, |promoted_pt| pos.type_bb[promoted_pt.index()].count() as u32);
         let in_hand = pos.hand.get(Piece {
             piece_type: pt,
             color: Color::Black,
@@ -522,12 +543,8 @@ impl SerializedPosition {
 
     fn to_position_sfen(&self) -> String {
         match self {
-            SerializedPosition::Packed(packed) => {
-                packed.to_position(1).generate_sfen().split(" ").take(3).join(" ")
-            }
-            SerializedPosition::FallbackedSfen(sfen) => {
-                sfen.clone()
-            }
+            SerializedPosition::Packed(packed) => packed.to_position(1).generate_sfen().split(" ").take(3).join(" "),
+            SerializedPosition::FallbackedSfen(sfen) => sfen.clone(),
         }
     }
 }
@@ -627,44 +644,37 @@ impl Position {
             return false;
         }
 
-        let (mut point, count) =
-            PieceType::iter()
-                .filter(|&pt| pt != PieceType::King)
-                .fold((0, 0), |accum, pt| {
-                    let unit = match pt {
-                        PieceType::Rook
-                        | PieceType::Bishop
-                        | PieceType::ProRook
-                        | PieceType::ProBishop => 5,
-                        _ => 1,
-                    };
+        let (mut point, count) = PieceType::iter()
+            .filter(|&pt| pt != PieceType::King)
+            .fold((0, 0), |accum, pt| {
+                let unit = match pt {
+                    PieceType::Rook | PieceType::Bishop | PieceType::ProRook | PieceType::ProBishop => 5,
+                    _ => 1,
+                };
 
-                    let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()])
-                        & &BBFactory::promote_zone(c);
-                    let count = bb.count() as u8;
-                    let point = count * unit;
+                let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()]) & &BBFactory::promote_zone(c);
+                let count = bb.count() as u8;
+                let point = count * unit;
 
-                    (accum.0 + point, accum.1 + count)
-                });
+                (accum.0 + point, accum.1 + count)
+            });
 
         if count < 10 {
             return false;
         }
 
-        point += PieceType::iter()
-            .filter(|pt| pt.is_hand_piece())
-            .fold(0, |acc, pt| {
-                let num = self.hand.get(Piece {
-                    piece_type: pt,
-                    color: c,
-                });
-                let pp = match pt {
-                    PieceType::Rook | PieceType::Bishop => 5,
-                    _ => 1,
-                };
-
-                acc + num * pp
+        point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
+            let num = self.hand.get(Piece {
+                piece_type: pt,
+                color: c,
             });
+            let pp = match pt {
+                PieceType::Rook | PieceType::Bishop => 5,
+                _ => 1,
+            };
+
+            acc + num * pp
+        });
 
         let lowerbound = match c {
             Color::Black => 28,
@@ -693,11 +703,7 @@ impl Position {
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
         let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
-        if bb.is_any() {
-            Some(bb.pop())
-        } else {
-            None
-        }
+        if bb.is_any() { Some(bb.pop()) } else { None }
     }
 
     /// Sets a piece at the given square.
@@ -760,25 +766,16 @@ impl Position {
         Ok(())
     }
 
-    fn make_normal_move(
-        &mut self,
-        from: Square,
-        to: Square,
-        promoted: bool,
-    ) -> Result<MoveRecord, MoveError> {
+    fn make_normal_move(&mut self, from: Square, to: Square, promoted: bool) -> Result<MoveRecord, MoveError> {
         let stm = self.side_to_move();
         let opponent = stm.flip();
 
-        let moved = self
-            .piece_at(from)
-            .ok_or(MoveError::Inconsistent("No piece found"))?;
+        let moved = self.piece_at(from).ok_or(MoveError::Inconsistent("No piece found"))?;
 
         let captured = *self.piece_at(to);
 
         if moved.color != stm {
-            return Err(MoveError::Inconsistent(
-                "The piece is not for the side to move",
-            ));
+            return Err(MoveError::Inconsistent("The piece is not for the side to move"));
         }
 
         if promoted && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
@@ -972,26 +969,11 @@ impl Position {
         let ksq = ksq.unwrap();
 
         [
-            (
-                PieceType::Rook,
-                BBFactory::rook_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::ProRook,
-                BBFactory::rook_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::Bishop,
-                BBFactory::bishop_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::ProBishop,
-                BBFactory::bishop_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::Lance,
-                BBFactory::lance_attack(c, ksq, &Bitboard::empty()),
-            ),
+            (PieceType::Rook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProRook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::Bishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProBishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::Lance, BBFactory::lance_attack(c, ksq, &Bitboard::empty())),
         ]
         .iter()
         .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
@@ -1025,9 +1007,7 @@ impl Position {
                 promoted,
             } => {
                 if self.piece_at(from).is_some() {
-                    return Err(MoveError::Inconsistent(
-                        "`from` of the move is filled by another piece",
-                    ));
+                    return Err(MoveError::Inconsistent("`from` of the move is filled by another piece"));
                 }
 
                 let moved = if promoted {
@@ -1039,9 +1019,7 @@ impl Position {
                     *placed
                 };
                 if *self.piece_at(to) != Some(*placed) {
-                    return Err(MoveError::Inconsistent(
-                        "Expected piece is not found in `to`",
-                    ));
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
                 }
 
                 self.set_piece(from, Some(moved));
@@ -1063,9 +1041,7 @@ impl Position {
             }
             MoveRecord::Drop { to, piece } => {
                 if *self.piece_at(to) != Some(piece) {
-                    return Err(MoveError::Inconsistent(
-                        "Expected piece is not found in `to`",
-                    ));
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
                 }
 
                 self.set_piece(to, None);
@@ -1090,17 +1066,15 @@ impl Position {
             PieceType::Bishop => BBFactory::bishop_attack(sq, &self.occupied_bb),
             PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.occupied_bb),
             PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, &self.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                &BBFactory::rook_attack(sq, &self.occupied_bb) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProBishop => {
                 &BBFactory::bishop_attack(sq, &self.occupied_bb)
                     | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
-            PieceType::ProSilver
-            | PieceType::ProKnight
-            | PieceType::ProLance
-            | PieceType::ProPawn => BBFactory::attacks_from(PieceType::Gold, p.color, sq),
+            PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
+                BBFactory::attacks_from(PieceType::Gold, p.color, sq)
+            }
             pt => BBFactory::attacks_from(pt, p.color, sq),
         };
 
@@ -1196,11 +1170,7 @@ impl Position {
             return format!("{} {}", initial_sfen, self.ply);
         }
 
-        let mut sfen = format!(
-            "{} {} moves",
-            initial_sfen,
-            self.ply - self.move_history.len() as u16
-        );
+        let mut sfen = format!("{} {} moves", initial_sfen, self.ply - self.move_history.len() as u16);
 
         for m in self.move_history.iter() {
             let _ = write!(sfen, " {}", &m.to_sfen());
@@ -1300,9 +1270,7 @@ impl Position {
                 }
                 s => {
                     match Piece::from_sfen(s) {
-                        Some(p) => self
-                            .hand
-                            .set(p, if num_pieces == 0 { 1 } else { num_pieces }),
+                        Some(p) => self.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
                         None => return Err(SfenError::IllegalPieceType),
                     };
                     num_pieces = 0;
@@ -1345,11 +1313,7 @@ impl Position {
             })
             .join("/");
 
-        let color = if self.side_to_move == Color::Black {
-            "b"
-        } else {
-            "w"
-        };
+        let color = if self.side_to_move == Color::Black { "b" } else { "w" };
 
         let mut hand = [Color::Black, Color::White]
             .iter()
@@ -1434,10 +1398,7 @@ impl fmt::Display for Position {
 
         let fmt_hand = |color: Color, f: &mut fmt::Formatter| -> fmt::Result {
             for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
-                let pc = Piece {
-                    piece_type: pt,
-                    color,
-                };
+                let pc = Piece { piece_type: pt, color };
                 let n = self.hand.get(pc);
 
                 if n > 0 {

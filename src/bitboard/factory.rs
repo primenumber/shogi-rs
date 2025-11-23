@@ -206,19 +206,18 @@ static mut ROOK_BLOCK_MASK: [Bitboard; 81] = [Bitboard { p: [0, 0] }; 81];
 static mut ROOK_ATTACK_INDEX: [usize; 81] = [0; 81];
 static mut ROOK_ATTACK_BB: [Bitboard; 495_616] = [Bitboard { p: [0, 0] }; 495_616];
 const ROOK_BLOCK_BITS: [usize; 81] = [
-    14, 13, 13, 13, 13, 13, 13, 13, 14, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12,
-    12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12,
-    12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13,
-    14, 13, 13, 13, 13, 13, 13, 13, 14,
+    14, 13, 13, 13, 13, 13, 13, 13, 14, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12,
+    12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 13, 12, 12, 12,
+    12, 12, 12, 12, 13, 13, 12, 12, 12, 12, 12, 12, 12, 13, 14, 13, 13, 13, 13, 13, 13, 13, 14,
 ];
 
 static mut BISHOP_BLOCK_MASK: [Bitboard; 81] = [Bitboard { p: [0, 0] }; 81];
 static mut BISHOP_ATTACK_INDEX: [usize; 81] = [0; 81];
 static mut BISHOP_ATTACK_BB: [Bitboard; 20224] = [Bitboard { p: [0, 0] }; 20224];
 const BISHOP_BLOCK_BITS: [usize; 81] = [
-    7, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 8, 8, 6, 6, 6, 6, 8, 10,
-    10, 10, 8, 6, 6, 6, 6, 8, 10, 12, 10, 8, 6, 6, 6, 6, 8, 10, 10, 10, 8, 6, 6, 6, 6, 8, 8, 8, 8,
-    8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 6, 6, 7,
+    7, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 8, 8, 8, 8, 6, 6, 6, 6, 8, 10, 10, 10, 8, 6, 6, 6,
+    6, 8, 10, 12, 10, 8, 6, 6, 6, 6, 8, 10, 10, 10, 8, 6, 6, 6, 6, 8, 8, 8, 8, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7,
+    6, 6, 6, 6, 6, 6, 6, 7,
 ];
 
 static mut LANCE_ATTACK_BB: [[[Bitboard; 128]; 81]; 2] = [[[Bitboard { p: [0, 0] }; 128]; 81]; 2];
@@ -420,9 +419,8 @@ fn init_pawn_attack() {
 
         for sq in Square::iter() {
             unsafe {
-                ATTACK_BB[index][color_index][sq.index()] = &ATTACK_BB[silver_index][color_index]
-                    [sq.index()]
-                    ^ &Factory::bishop_attack(sq, &FULL_BB);
+                ATTACK_BB[index][color_index][sq.index()] =
+                    &ATTACK_BB[silver_index][color_index][sq.index()] ^ &Factory::bishop_attack(sq, &FULL_BB);
             }
         }
     }
@@ -442,8 +440,7 @@ fn init_knight_attack() {
 
                 if pawn_bb.is_any() {
                     let psq = pawn_bb.pop();
-                    bb = &Factory::bishop_attack(psq, &FULL_BB)
-                        & &IN_FRONT_BB[color_index][sq.rank() as usize];
+                    bb = &Factory::bishop_attack(psq, &FULL_BB) & &IN_FRONT_BB[color_index][sq.rank() as usize];
                 }
                 ATTACK_BB[index][color_index][sq.index()] = bb;
             }
@@ -463,8 +460,7 @@ fn init_lance_attack() {
                 let occupied = index_to_occupied(i, BITS, &block_mask);
                 unsafe {
                     LANCE_ATTACK_BB[color_index][sq.index()][i] =
-                        &Factory::rook_attack(sq, &occupied)
-                            & &IN_FRONT_BB[color_index][sq.rank() as usize];
+                        &Factory::rook_attack(sq, &occupied) & &IN_FRONT_BB[color_index][sq.rank() as usize];
                 }
             }
         }
@@ -483,12 +479,10 @@ fn init_between() {
             unsafe {
                 if df == 0 || dr == 0 {
                     BETWEEN_BB[from.index()][to.index()] =
-                        &Factory::rook_attack(from, &square_bb(to))
-                            & &Factory::rook_attack(to, &square_bb(from));
+                        &Factory::rook_attack(from, &square_bb(to)) & &Factory::rook_attack(to, &square_bb(from));
                 } else if df.abs() == dr.abs() {
                     BETWEEN_BB[from.index()][to.index()] =
-                        &Factory::bishop_attack(from, &square_bb(to))
-                            & &Factory::bishop_attack(to, &square_bb(from));
+                        &Factory::bishop_attack(from, &square_bb(to)) & &Factory::bishop_attack(to, &square_bb(from));
                 }
             }
         }

@@ -11,11 +11,7 @@ pub struct Piece {
 impl Piece {
     /// Creates a new instance of `Piece` from SFEN formatted string.
     pub fn from_sfen(c: char) -> Option<Self> {
-        let color = if c.is_uppercase() {
-            Color::Black
-        } else {
-            Color::White
-        };
+        let color = if c.is_uppercase() { Color::Black } else { Color::White };
 
         PieceType::from_sfen(c).map(|piece_type| Piece { piece_type, color })
     }

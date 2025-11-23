@@ -102,11 +102,7 @@ impl TimeControl {
                 ref mut white_time,
                 ref byoyomi,
             } => {
-                let target_time = if c == Color::Black {
-                    black_time
-                } else {
-                    white_time
-                };
+                let target_time = if c == Color::Black { black_time } else { white_time };
 
                 if d > (*target_time + *byoyomi) {
                     return false;
@@ -144,11 +140,7 @@ mod tests {
     #[test]
     fn consume_byoyomi() {
         // (black|white)_time, byoyomi, consume, remaining
-        let ok_cases = [
-            (5000, 1000, 1000, 4000),
-            (5000, 1000, 5000, 0),
-            (5000, 1000, 6000, 0),
-        ];
+        let ok_cases = [(5000, 1000, 1000, 4000), (5000, 1000, 5000, 0), (5000, 1000, 6000, 0)];
 
         // (black|white)_time, byoyomi, consume
         let ng_cases = [(5000, 1000, 6001), (5000, 0, 5001)];

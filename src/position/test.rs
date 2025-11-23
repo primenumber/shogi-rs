@@ -1,7 +1,7 @@
 #![cfg(test)]
 use super::*;
-use crate::square::consts::*;
 use crate::position::BBFactory;
+use crate::square::consts::*;
 
 fn setup() {
     BBFactory::init();
@@ -118,11 +118,7 @@ fn player_bb() {
 fn pinned_bb() {
     setup();
 
-    let cases: &[(&str, &[Square], &[Square])] = &[(
-        "R6gk/9/8p/9/4p4/9/9/8L/B8 b - 1",
-        &[],
-        &[SQ_2A, SQ_1C, SQ_5E],
-    )];
+    let cases: &[(&str, &[Square], &[Square])] = &[("R6gk/9/8p/9/4p4/9/9/8L/B8 b - 1", &[], &[SQ_2A, SQ_1C, SQ_5E])];
 
     let mut pos = Position::new();
     for case in cases {
@@ -183,8 +179,7 @@ fn make_normal_move() {
 
     let mut pos = Position::new();
     for case in test_cases.iter() {
-        pos.set_sfen(base_sfen)
-            .expect("failed to parse SFEN string");
+        pos.set_sfen(base_sfen).expect("failed to parse SFEN string");
         assert_eq!(case.3, pos.make_normal_move(case.0, case.1, case.2).is_ok());
     }
 
@@ -213,8 +208,7 @@ fn make_drop_move() {
 
     let mut pos = Position::new();
     for case in test_cases.iter() {
-        pos.set_sfen(base_sfen)
-            .expect("failed to parse SFEN string");
+        pos.set_sfen(base_sfen).expect("failed to parse SFEN string");
         assert_eq!(
             case.2,
             pos.make_move(Move::Drop {
@@ -387,8 +381,7 @@ fn unmake_move() {
 
     let mut pos = Position::new();
     let base_sfen = "l6nl/4+p+P1gk/2n2S3/p1p4Pp/3P2Sp1/1PPb2P1P/4+P1GS1/R8/LN4bKL w RG5gsnp 1";
-    pos.set_sfen(base_sfen)
-        .expect("failed to parse SFEN string");
+    pos.set_sfen(base_sfen).expect("failed to parse SFEN string");
     let base_state = format!("{pos}");
     println!("{base_state}");
     let test_cases = [
@@ -453,8 +446,7 @@ fn unmake_move() {
     ];
 
     for case in test_cases.iter() {
-        pos.set_sfen(base_sfen)
-            .expect("failed to parse SFEN string");
+        pos.set_sfen(base_sfen).expect("failed to parse SFEN string");
         pos.make_move(*case)
             .unwrap_or_else(|_| panic!("failed to make a move: {case}"));
         pos.unmake_move()

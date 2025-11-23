@@ -4,15 +4,8 @@ use std::fmt;
 /// Represents a move which either is a normal move or a drop move.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Move {
-    Normal {
-        from: Square,
-        to: Square,
-        promote: bool,
-    },
-    Drop {
-        to: Square,
-        piece_type: PieceType,
-    },
+    Normal { from: Square, to: Square, promote: bool },
+    Drop { to: Square, piece_type: PieceType },
 }
 
 impl Move {
