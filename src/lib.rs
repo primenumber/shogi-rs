@@ -48,6 +48,6 @@ pub use self::hand::Hand;
 pub use self::moves::Move;
 pub use self::piece::Piece;
 pub use self::piece_type::PieceType;
-pub use self::position::{MoveRecord, Position};
+pub use self::position::{MoveRecord, Position, StateInfo};
 pub use self::square::Square;
 pub use self::time::TimeControl;

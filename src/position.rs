@@ -63,7 +63,7 @@ impl PartialEq<Move> for MoveRecord {
     }
 }
 
-struct PieceGrid([Option<Piece>; 81]);
+pub(crate) struct PieceGrid([Option<Piece>; 81]);
 
 impl PieceGrid {
     pub fn get(&self, sq: Square) -> &Option<Piece> {
@@ -115,7 +115,7 @@ pub struct PackedPosition([u64; 4]);
 impl PackedPosition {
     fn pack_by_occupied(pos: &Position) -> [u64; 14] {
         PieceType::iter()
-            .map(|pt| pos.type_bb[pt.index()].pext_u64(&pos.occupied_bb))
+            .map(|pt| pos.state.type_bb[pt.index()].pext_u64(&pos.state.occupied_bb))
             .collect_vec()
             .try_into()
             .unwrap()
@@ -139,11 +139,11 @@ impl PackedPosition {
         .iter()
         .rev()
         .fold(0u64, |mut accum, &pt| {
-            let num_black = pos.hand.get(Piece {
+            let num_black = pos.state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::Black,
             }) as u64;
-            let num_white = pos.hand.get(Piece {
+            let num_white = pos.state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::White,
             }) as u64;
@@ -393,28 +393,30 @@ impl PackedPosition {
         let hand = PackedPosition::counts_to_hand(hand_counts, color_packed_hand);
 
         Position {
-            board: board,
-            hand,
-            ply,
-            side_to_move,
+            state: StateInfo {
+                board: board,
+                hand,
+                ply,
+                side_to_move,
+                occupied_bb,
+                color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
+                type_bb,
+            },
             move_history: Vec::new(),
             position_history: vec![(SerializedPosition::Packed(*self), 0)],
-            occupied_bb,
-            color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
-            type_bb,
         }
     }
 
     fn num_pieces(pos: &Position, pt: PieceType) -> u32 {
-        let on_board = pos.type_bb[pt.index()].count() as u32;
+        let on_board = pos.state.type_bb[pt.index()].count() as u32;
         let on_board_promoted = pt
             .promote()
-            .map_or(0, |promoted_pt| pos.type_bb[promoted_pt.index()].count() as u32);
-        let in_hand = pos.hand.get(Piece {
+            .map_or(0, |promoted_pt| pos.state.type_bb[promoted_pt.index()].count() as u32);
+        let in_hand = pos.state.hand.get(Piece {
             piece_type: pt,
             color: Color::Black,
         }) as u32
-            + pos.hand.get(Piece {
+            + pos.state.hand.get(Piece {
                 piece_type: pt,
                 color: Color::White,
             }) as u32;
@@ -424,7 +426,7 @@ impl PackedPosition {
     // Pack the given Position into PackedPosition.
     pub fn from_position<const VALIDATE: bool>(pos: &Position) -> Option<PackedPosition> {
         if VALIDATE {
-            if pos.occupied_bb.count() > 40 {
+            if pos.state.occupied_bb.count() > 40 {
                 return None;
             }
             let pt_and_counts = [
@@ -445,9 +447,9 @@ impl PackedPosition {
         }
 
         let mut data = [0u64; 4];
-        let mut occupied_low = pos.occupied_bb.low();
-        let mut occupied_high = pos.occupied_bb.high();
-        if pos.side_to_move == Color::White {
+        let mut occupied_low = pos.state.occupied_bb.low();
+        let mut occupied_high = pos.state.occupied_bb.high();
+        if pos.state.side_to_move == Color::White {
             occupied_low = !occupied_low & 0x7fffffff_ffffffff; // 63bits
             occupied_high = !occupied_high & 0x00000000_0003ffff; // 18bits
         }
@@ -485,12 +487,12 @@ impl PackedPosition {
         let kbr_packed = king_packed | bishop_or_rook;
         let kbrsg_packed = kbr_packed | silver_or_gold;
 
-        let color_packed_board = pos.color_bb[Color::Black.index()]
-            .pext_u64(&pos.occupied_bb)
+        let color_packed_board = pos.state.color_bb[Color::Black.index()]
+            .pext_u64(&pos.state.occupied_bb)
             .pext(!king_packed);
         let color_packed_hand = PackedPosition::packed_hand_colors(pos);
-        let color_packed =
-            color_packed_board | (color_packed_hand << (pos.occupied_bb.count() as u32 - king_packed.count_ones()));
+        let color_packed = color_packed_board
+            | (color_packed_hand << (pos.state.occupied_bb.count() as u32 - king_packed.count_ones()));
 
         data[0] = occupied_low;
         if black_king_index < white_king_index {
@@ -535,7 +537,7 @@ impl SerializedPosition {
             SerializedPosition::FallbackedSfen(sfen) => {
                 let mut pos = Position::new();
                 pos.set_sfen(sfen).unwrap();
-                pos.ply = ply;
+                pos.state.ply = ply;
                 pos
             }
         }
@@ -549,7 +551,19 @@ impl SerializedPosition {
     }
 }
 
-/// Represents a state of the game.
+/// Represents the current board state (without history).
+#[derive(Debug)]
+pub struct StateInfo {
+    pub(crate) board: PieceGrid,
+    pub(crate) hand: Hand,
+    pub(crate) ply: u16,
+    pub(crate) side_to_move: Color,
+    pub(crate) occupied_bb: Bitboard,
+    pub(crate) color_bb: [Bitboard; 2],
+    pub(crate) type_bb: [Bitboard; 14],
+}
+
+/// Represents a state of the game (board state + history).
 ///
 /// # Examples
 ///
@@ -569,15 +583,9 @@ impl SerializedPosition {
 /// ```
 #[derive(Debug)]
 pub struct Position {
-    board: PieceGrid,
-    hand: Hand,
-    ply: u16,
-    side_to_move: Color,
+    pub(crate) state: StateInfo,
     move_history: Vec<MoveRecord>,
     position_history: Vec<(SerializedPosition, u16)>,
-    occupied_bb: Bitboard,
-    color_bb: [Bitboard; 2],
-    type_bb: [Bitboard; 14],
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -596,27 +604,27 @@ impl Position {
 
     /// Returns a piece at the given square.
     pub fn piece_at(&self, sq: Square) -> &Option<Piece> {
-        self.board.get(sq)
+        self.state.board.get(sq)
     }
 
     /// Returns a bitboard containing pieces of the given player.
     pub fn player_bb(&self, c: Color) -> &Bitboard {
-        &self.color_bb[c.index()]
+        &self.state.color_bb[c.index()]
     }
 
     /// Returns the number of the given piece in hand.
     pub fn hand(&self, p: Piece) -> u8 {
-        self.hand.get(p)
+        self.state.hand.get(p)
     }
 
     /// Returns the side to make a move next.
     pub fn side_to_move(&self) -> Color {
-        self.side_to_move
+        self.state.side_to_move
     }
 
     /// Returns the number of plies already completed by the current state.
     pub fn ply(&self) -> u16 {
-        self.ply
+        self.state.ply
     }
 
     /// Returns a history of all moves made since the beginning of the game.
@@ -630,7 +638,7 @@ impl Position {
     ///
     /// [csa]: http://www2.computer-shogi.org/wcsc26/rule.pdf#page=9
     pub fn try_declare_winning(&self, c: Color) -> bool {
-        if c != self.side_to_move {
+        if c != self.state.side_to_move {
             return false;
         }
 
@@ -652,7 +660,8 @@ impl Position {
                     _ => 1,
                 };
 
-                let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()]) & &BBFactory::promote_zone(c);
+                let bb =
+                    &(&self.state.type_bb[pt.index()] & &self.state.color_bb[c.index()]) & &BBFactory::promote_zone(c);
                 let count = bb.count() as u8;
                 let point = count * unit;
 
@@ -664,7 +673,7 @@ impl Position {
         }
 
         point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
-            let num = self.hand.get(Piece {
+            let num = self.state.hand.get(Piece {
                 piece_type: pt,
                 color: c,
             });
@@ -702,13 +711,13 @@ impl Position {
 
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
-        let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
+        let mut bb = &self.state.type_bb[PieceType::King.index()] & &self.state.color_bb[c.index()];
         if bb.is_any() { Some(bb.pop()) } else { None }
     }
 
     /// Sets a piece at the given square.
     fn set_piece(&mut self, sq: Square, p: Option<Piece>) {
-        self.board.set(sq, p);
+        self.state.board.set(sq, p);
     }
 
     fn is_attacked_by(&self, sq: Square, c: Color) -> bool {
@@ -716,7 +725,7 @@ impl Position {
     }
 
     fn get_attackers_of_type(&self, pt: PieceType, sq: Square, c: Color) -> Bitboard {
-        let bb = &self.type_bb[pt.index()] & &self.color_bb[c.index()];
+        let bb = &self.state.type_bb[pt.index()] & &self.state.color_bb[c.index()];
 
         if bb.is_empty() {
             return bb;
@@ -801,53 +810,53 @@ impl Position {
 
         self.set_piece(from, None);
         self.set_piece(to, Some(placed));
-        self.occupied_bb ^= from;
-        self.occupied_bb ^= to;
-        self.type_bb[moved.piece_type.index()] ^= from;
-        self.type_bb[placed.piece_type.index()] ^= to;
-        self.color_bb[moved.color.index()] ^= from;
-        self.color_bb[placed.color.index()] ^= to;
+        self.state.occupied_bb ^= from;
+        self.state.occupied_bb ^= to;
+        self.state.type_bb[moved.piece_type.index()] ^= from;
+        self.state.type_bb[placed.piece_type.index()] ^= to;
+        self.state.color_bb[moved.color.index()] ^= from;
+        self.state.color_bb[placed.color.index()] ^= to;
 
         if let Some(ref cap) = captured {
-            self.occupied_bb ^= to;
-            self.type_bb[cap.piece_type.index()] ^= to;
-            self.color_bb[cap.color.index()] ^= to;
+            self.state.occupied_bb ^= to;
+            self.state.type_bb[cap.piece_type.index()] ^= to;
+            self.state.color_bb[cap.color.index()] ^= to;
             let pc = cap.flip();
             let pc = match pc.unpromote() {
                 Some(unpromoted) => unpromoted,
                 None => pc,
             };
-            self.hand.increment(pc);
+            self.state.hand.increment(pc);
         }
 
         if self.in_check(stm) {
             // Undo-ing the move.
             self.set_piece(from, Some(moved));
             self.set_piece(to, captured);
-            self.occupied_bb ^= from;
-            self.occupied_bb ^= to;
-            self.type_bb[moved.piece_type.index()] ^= from;
-            self.type_bb[placed.piece_type.index()] ^= to;
-            self.color_bb[moved.color.index()] ^= from;
-            self.color_bb[placed.color.index()] ^= to;
+            self.state.occupied_bb ^= from;
+            self.state.occupied_bb ^= to;
+            self.state.type_bb[moved.piece_type.index()] ^= from;
+            self.state.type_bb[placed.piece_type.index()] ^= to;
+            self.state.color_bb[moved.color.index()] ^= from;
+            self.state.color_bb[placed.color.index()] ^= to;
 
             if let Some(ref cap) = captured {
-                self.occupied_bb ^= to;
-                self.type_bb[cap.piece_type.index()] ^= to;
-                self.color_bb[cap.color.index()] ^= to;
+                self.state.occupied_bb ^= to;
+                self.state.type_bb[cap.piece_type.index()] ^= to;
+                self.state.color_bb[cap.color.index()] ^= to;
                 let pc = cap.flip();
                 let pc = match pc.unpromote() {
                     Some(unpromoted) => unpromoted,
                     None => pc,
                 };
-                self.hand.decrement(pc);
+                self.state.hand.decrement(pc);
             }
 
             return Err(MoveError::InCheck);
         }
 
-        self.side_to_move = opponent;
-        self.ply += 1;
+        self.state.side_to_move = opponent;
+        self.state.ply += 1;
 
         self.log_position();
         self.detect_repetition()?;
@@ -913,7 +922,7 @@ impl Position {
 
                         if not_attacked {
                             // the dropped pawn may block bishop's moves
-                            self.occupied_bb ^= to;
+                            self.state.occupied_bb ^= to;
                             // can the opponent's king evade?
                             let is_attacked = |sq| {
                                 if let Some(pc) = *self.piece_at(sq) {
@@ -925,7 +934,7 @@ impl Position {
                                 self.is_attacked_by(sq, stm)
                             };
                             let uchifuzume = self.move_candidates(king_sq, pc).all(is_attacked);
-                            self.occupied_bb ^= to;
+                            self.state.occupied_bb ^= to;
 
                             if uchifuzume {
                                 return Err(MoveError::Uchifuzume);
@@ -937,22 +946,22 @@ impl Position {
         }
 
         self.set_piece(to, Some(pc));
-        self.occupied_bb ^= to;
-        self.type_bb[pc.piece_type.index()] ^= to;
-        self.color_bb[pc.color.index()] ^= to;
+        self.state.occupied_bb ^= to;
+        self.state.type_bb[pc.piece_type.index()] ^= to;
+        self.state.color_bb[pc.color.index()] ^= to;
 
         if self.in_check(stm) {
             // Undo-ing the move.
             self.set_piece(to, None);
-            self.occupied_bb ^= to;
-            self.type_bb[pc.piece_type.index()] ^= to;
-            self.color_bb[pc.color.index()] ^= to;
+            self.state.occupied_bb ^= to;
+            self.state.type_bb[pc.piece_type.index()] ^= to;
+            self.state.color_bb[pc.color.index()] ^= to;
             return Err(MoveError::InCheck);
         }
 
-        self.hand.decrement(pc);
-        self.side_to_move = opponent;
-        self.ply += 1;
+        self.state.hand.decrement(pc);
+        self.state.side_to_move = opponent;
+        self.state.ply += 1;
 
         self.log_position();
         self.detect_repetition()?;
@@ -977,11 +986,11 @@ impl Position {
         ]
         .iter()
         .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
-            let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.flip().index()]) & mask;
+            let bb = &(&self.state.type_bb[pt.index()] & &self.state.color_bb[c.flip().index()]) & mask;
 
             for psq in bb {
-                let between = &BBFactory::between(ksq, psq) & &self.occupied_bb;
-                if between.count() == 1 && (&between & &self.color_bb[c.index()]).is_any() {
+                let between = &BBFactory::between(ksq, psq) & &self.state.occupied_bb;
+                if between.count() == 1 && (&between & &self.state.color_bb[c.index()]).is_any() {
                     accum |= &between;
                 }
             }
@@ -1024,19 +1033,19 @@ impl Position {
 
                 self.set_piece(from, Some(moved));
                 self.set_piece(to, *captured);
-                self.occupied_bb ^= from;
-                self.occupied_bb ^= to;
-                self.type_bb[moved.piece_type.index()] ^= from;
-                self.type_bb[placed.piece_type.index()] ^= to;
-                self.color_bb[moved.color.index()] ^= from;
-                self.color_bb[placed.color.index()] ^= to;
+                self.state.occupied_bb ^= from;
+                self.state.occupied_bb ^= to;
+                self.state.type_bb[moved.piece_type.index()] ^= from;
+                self.state.type_bb[placed.piece_type.index()] ^= to;
+                self.state.color_bb[moved.color.index()] ^= from;
+                self.state.color_bb[placed.color.index()] ^= to;
 
                 if let Some(ref cap) = *captured {
-                    self.occupied_bb ^= to;
-                    self.type_bb[cap.piece_type.index()] ^= to;
-                    self.color_bb[cap.color.index()] ^= to;
+                    self.state.occupied_bb ^= to;
+                    self.state.type_bb[cap.piece_type.index()] ^= to;
+                    self.state.color_bb[cap.color.index()] ^= to;
                     let unpromoted_cap = cap.unpromote().unwrap_or(*cap);
-                    self.hand.decrement(unpromoted_cap.flip());
+                    self.state.hand.decrement(unpromoted_cap.flip());
                 }
             }
             MoveRecord::Drop { to, piece } => {
@@ -1045,15 +1054,15 @@ impl Position {
                 }
 
                 self.set_piece(to, None);
-                self.occupied_bb ^= to;
-                self.type_bb[piece.piece_type.index()] ^= to;
-                self.color_bb[piece.color.index()] ^= to;
-                self.hand.increment(piece);
+                self.state.occupied_bb ^= to;
+                self.state.type_bb[piece.piece_type.index()] ^= to;
+                self.state.color_bb[piece.color.index()] ^= to;
+                self.state.hand.increment(piece);
             }
         };
 
-        self.side_to_move = self.side_to_move.flip();
-        self.ply -= 1;
+        self.state.side_to_move = self.state.side_to_move.flip();
+        self.state.ply -= 1;
         self.position_history.pop();
 
         Ok(())
@@ -1062,14 +1071,15 @@ impl Position {
     /// Returns a list of squares to where the given piece at the given square can move.
     pub fn move_candidates(&self, sq: Square, p: Piece) -> Bitboard {
         let bb = match p.piece_type {
-            PieceType::Rook => BBFactory::rook_attack(sq, &self.occupied_bb),
-            PieceType::Bishop => BBFactory::bishop_attack(sq, &self.occupied_bb),
-            PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.occupied_bb),
+            PieceType::Rook => BBFactory::rook_attack(sq, &self.state.occupied_bb),
+            PieceType::Bishop => BBFactory::bishop_attack(sq, &self.state.occupied_bb),
+            PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.state.occupied_bb),
             PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, &self.occupied_bb) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                &BBFactory::rook_attack(sq, &self.state.occupied_bb)
+                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProBishop => {
-                &BBFactory::bishop_attack(sq, &self.occupied_bb)
+                &BBFactory::bishop_attack(sq, &self.state.occupied_bb)
                     | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
@@ -1078,7 +1088,7 @@ impl Position {
             pt => BBFactory::attacks_from(pt, p.color, sq),
         };
 
-        &bb & &!&self.color_bb[p.color.index()]
+        &bb & &!&self.state.color_bb[p.color.index()]
     }
 
     fn detect_repetition(&self) -> Result<(), MoveError> {
@@ -1167,10 +1177,10 @@ impl Position {
 
         let initial_sfen = self.position_history.first().unwrap().0.to_position_sfen();
         if self.move_history.is_empty() {
-            return format!("{} {}", initial_sfen, self.ply);
+            return format!("{} {}", initial_sfen, self.ply());
         }
 
-        let mut sfen = format!("{} {} moves", initial_sfen, self.ply - self.move_history.len() as u16);
+        let mut sfen = format!("{} {} moves", initial_sfen, self.ply() - self.move_history.len() as u16);
 
         for m in self.move_history.iter() {
             let _ = write!(sfen, " {}", &m.to_sfen());
@@ -1182,9 +1192,9 @@ impl Position {
     fn parse_sfen_board(&mut self, s: &str) -> Result<(), SfenError> {
         let rows = s.split('/');
 
-        self.occupied_bb = Bitboard::empty();
-        self.color_bb = Default::default();
-        self.type_bb = Default::default();
+        self.state.occupied_bb = Bitboard::empty();
+        self.state.color_bb = Default::default();
+        self.state.type_bb = Default::default();
 
         for (i, row) in rows.enumerate() {
             if i >= 9 {
@@ -1229,9 +1239,9 @@ impl Position {
 
                             let sq = Square::new(8 - j, i as u8).unwrap();
                             self.set_piece(sq, Some(piece));
-                            self.occupied_bb |= sq;
-                            self.color_bb[piece.color.index()] |= sq;
-                            self.type_bb[piece.piece_type.index()] |= sq;
+                            self.state.occupied_bb |= sq;
+                            self.state.color_bb[piece.color.index()] |= sq;
+                            self.state.type_bb[piece.piece_type.index()] |= sq;
                             j += 1;
 
                             is_promoted = false;
@@ -1246,7 +1256,7 @@ impl Position {
     }
 
     fn parse_sfen_stm(&mut self, s: &str) -> Result<(), SfenError> {
-        self.side_to_move = match s {
+        self.state.side_to_move = match s {
             "b" => Color::Black,
             "w" => Color::White,
             _ => return Err(SfenError::IllegalSideToMove),
@@ -1256,7 +1266,7 @@ impl Position {
 
     fn parse_sfen_hand(&mut self, s: &str) -> Result<(), SfenError> {
         if s == "-" {
-            self.hand.clear();
+            self.state.hand.clear();
             return Ok(());
         }
 
@@ -1270,7 +1280,7 @@ impl Position {
                 }
                 s => {
                     match Piece::from_sfen(s) {
-                        Some(p) => self.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
+                        Some(p) => self.state.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
                         None => return Err(SfenError::IllegalPieceType),
                     };
                     num_pieces = 0;
@@ -1282,7 +1292,7 @@ impl Position {
     }
 
     fn parse_sfen_ply(&mut self, s: &str) -> Result<(), SfenError> {
-        self.ply = s.parse()?;
+        self.state.ply = s.parse()?;
         Ok(())
     }
 
@@ -1313,7 +1323,11 @@ impl Position {
             })
             .join("/");
 
-        let color = if self.side_to_move == Color::Black { "b" } else { "w" };
+        let color = if self.state.side_to_move == Color::Black {
+            "b"
+        } else {
+            "w"
+        };
 
         let mut hand = [Color::Black, Color::White]
             .iter()
@@ -1325,7 +1339,7 @@ impl Position {
                             piece_type: pt,
                             color: *c,
                         };
-                        let n = self.hand.get(pc);
+                        let n = self.state.hand.get(pc);
 
                         if n == 0 {
                             "".to_string()
@@ -1343,7 +1357,7 @@ impl Position {
             hand = "-".to_string();
         }
 
-        format!("{} {} {} {}", board, color, hand, self.ply)
+        format!("{} {} {} {}", board, color, hand, self.state.ply)
     }
 }
 
@@ -1351,18 +1365,26 @@ impl Position {
 // Trait implementations
 /////////////////////////////////////////////////////////////////////////////
 
-impl Default for Position {
-    fn default() -> Position {
-        Position {
+impl Default for StateInfo {
+    fn default() -> StateInfo {
+        StateInfo {
             side_to_move: Color::Black,
             board: PieceGrid([None; 81]),
             hand: Default::default(),
             ply: 1,
-            move_history: Default::default(),
-            position_history: Default::default(),
             occupied_bb: Default::default(),
             color_bb: Default::default(),
             type_bb: Default::default(),
+        }
+    }
+}
+
+impl Default for Position {
+    fn default() -> Position {
+        Position {
+            state: Default::default(),
+            move_history: Default::default(),
+            position_history: Default::default(),
         }
     }
 }
@@ -1389,7 +1411,7 @@ impl fmt::Display for Position {
         writeln!(
             f,
             "Side to move: {}",
-            if self.side_to_move == Color::Black {
+            if self.state.side_to_move == Color::Black {
                 "Black"
             } else {
                 "White"
@@ -1399,7 +1421,7 @@ impl fmt::Display for Position {
         let fmt_hand = |color: Color, f: &mut fmt::Formatter| -> fmt::Result {
             for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
                 let pc = Piece { piece_type: pt, color };
-                let n = self.hand.get(pc);
+                let n = self.state.hand.get(pc);
 
                 if n > 0 {
                     write!(f, "{pc}{n} ")?;
@@ -1415,7 +1437,7 @@ impl fmt::Display for Position {
         fmt_hand(Color::White, f)?;
         writeln!(f)?;
 
-        write!(f, "Ply: {}", self.ply)?;
+        write!(f, "Ply: {}", self.state.ply)?;
 
         Ok(())
     }

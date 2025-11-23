@@ -837,7 +837,7 @@ fn packed_position_roundtrip() {
 
         // Verify bitboards match
         assert_eq!(
-            original_pos.occupied_bb, restored_pos.occupied_bb,
+            original_pos.state.occupied_bb, restored_pos.state.occupied_bb,
             "occupied_bb mismatch in case #{i} (SFEN: {sfen})"
         );
         for c in [Color::Black, Color::White] {
