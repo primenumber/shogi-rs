@@ -89,8 +89,8 @@ impl StateInfo {
     /// Returns true if the given square is attacked by the given color.
     pub(crate) fn is_attacked_by(&self, sq: Square, c: Color) -> bool {
         PieceType::iter()
-            .flat_map(|pt| self.get_attackers_of_type(pt, sq, c))
-            .any(|_| true)
+            .map(|pt| self.get_attackers_of_type(pt, sq, c))
+            .any(|bb| bb.is_any())
     }
 
     /// Returns a bitboard containing pieces of the given type that attack the given square.
