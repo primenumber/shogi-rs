@@ -115,7 +115,7 @@ pub struct PackedPosition([u64; 4]);
 impl PackedPosition {
     fn pack_by_occupied(pos: &Position) -> [u64; 14] {
         PieceType::iter()
-            .map(|pt| pos.type_bb[pt.index()].pext(&pos.occupied_bb).low())
+            .map(|pt| pos.type_bb[pt.index()].pext_u64(&pos.occupied_bb))
             .collect_vec()
             .try_into()
             .unwrap()
@@ -465,8 +465,7 @@ impl PackedPosition {
         let kbrsg_packed = kbr_packed | silver_or_gold;
 
         let color_packed_board = pos.color_bb[Color::Black.index()]
-            .pext(&pos.occupied_bb)
-            .low()
+            .pext_u64(&pos.occupied_bb)
             .pext(!king_packed);
         let color_packed_hand = PackedPosition::packed_hand_colors(pos);
         let color_packed =

@@ -133,6 +133,19 @@ impl Bitboard {
         }
     }
 
+    /// Parallel bit extract - extracts bits from self according to mask and returns as u64.
+    #[inline(always)]
+    pub fn pext_u64(&self, mask: &Bitboard) -> u64 {
+        let extracted_low = self.p[0].pext(mask.p[0]);
+        let extracted_high = self.p[1].pext(mask.p[1]);
+
+        // Count how many bits are set in mask.p[0] to know where to place extracted_high
+        let low_bit_count = (mask.p[0] & 0x7FFFFFFFFFFFFFFF).count_ones();
+
+        // Combine: extracted_low in lower bits, extracted_high shifted up
+        extracted_low | (extracted_high.wrapping_shl(low_bit_count))
+    }
+
     /// Parallel bit deposit - deposits bits from self to positions indicated by mask.
     ///
     /// This is the inverse operation of pext. For each set bit in the mask,
