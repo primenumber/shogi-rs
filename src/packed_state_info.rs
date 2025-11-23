@@ -4,29 +4,89 @@ use itertools::Itertools;
 use crate::state_info::{PieceGrid, StateInfo};
 use crate::{Bitboard, Color, Hand, Piece, PieceType};
 
-// A compact representation of Position
-// Layout (bit index):
-// bits[0..63]   : occupied_low (63 bits)
-// bit 63        : black_king_index < white_king_index
-//
-// bits[64..81]  : occupied_high (18 bits)
-// bits[81..89]  : is_silver (8 bits)
-// bits[89..128] : is_black (38 bits)
-//
-// bits[128..168]: is_pawn (40 bits)
-// bits[168..182]: is_silver_or_gold (14 bits)
-// bits[182..188]: is_bishop_or_rook (6 bits)
-// bits[188..192]: is_bishop (4 bits)
-//
-// bits[192..226]: is_promoted (34 bits)
-// bits[226..248]: is_lance_or_knight (22 bits)
-// bits[248..256]: is_lance (8 bits)
-//
-// Total: 256 bits = 4 u64s
-//
-// Layout of color bits:
-// bits[0..(N-1)]: color of pieces on board except kings (N = occupied_bb.count() - 2)
-// bits[(N)..]: color of pieces in hand (rest bits)
+/// A compact representation of StateInfo using 256 bits.
+///
+/// # Layout
+///
+/// | Description        | Size (bits) | Offset (bits) |
+/// |--------------------|-------------|---------------|
+/// | occupied_low       | 63          | 0             |
+/// | king_order         | 1           | 63            |
+/// | occupied_high      | 18          | 64            |
+/// | is_silver          | 8           | 81            |
+/// | is_black           | 38          | 89            |
+/// | is_pawn            | 40          | 128           |
+/// | is_silver_or_gold  | 14          | 168           |
+/// | is_bishop_or_rook  | 6           | 182           |
+/// | is_bishop          | 4           | 188           |
+/// | is_promoted        | 34          | 192           |
+/// | is_lance_or_knight | 22          | 226           |
+/// | is_lance           | 8           | 248           |
+/// | **Total**          | **256**     |               |
+///
+/// ## Explanation of fields
+///
+/// ### occupied_low, occupied_high
+///
+/// bitboard of occupied squares. If side to move is White, the bits are inverted.
+/// Since there are at most 40 pieces on the board, the number of set bits is at most 40 when side to move is Black.
+/// If side to move is White, the number of set bits is at least 41.
+///
+/// ### king_order
+///
+/// Indicates which king has the smaller index on the board.
+/// 1: Black king has smaller index, 0: White king has smaller index.
+///
+/// ### piece type bits
+///
+/// The pieces on the board are encoded using a prefix-free Huffman code as follows:
+/// Promoted pieces are treated as unpromoted pieces here.
+///
+/// | Piece Type | Huffman Code       |
+/// |------------|--------------------|
+/// | Pawn       | 1                  |
+/// | Lance      | 011                |
+/// | Knight     | 010                |
+/// | Silver     | 0011               |
+/// | Gold       | 0010               |
+/// | Bishop     | 000111             |
+/// | Rook       | 000110             |
+/// | King       | 00010              |
+///
+/// The bits indicating piece types are stored in multiple fields as follows:
+///
+/// | Field              | nth bit of Huffman code | Include Piece Types              |
+/// |--------------------|-------------------------|----------------------------------|
+/// | is_pawn            | 0                       | All types                        |
+/// | is_lance_or_knight | 1                       | Except Pawn                      |
+/// | is_lance           | 2                       | Lance, Knight                    |
+/// | is_silver_or_gold  | 2                       | Silver, Gold, Bishop, Rook, King |
+/// | is_silver          | 3                       | Silver, Gold                     |
+/// | is_bishop_or_rook  | 3                       | Bishop, Rook, King               |
+/// | is_bishop          | 4                       | Bishop, Rook                     |
+///
+/// If there are fewer than 40 pieces on the board, fill the upper bits with 0.
+///
+/// ### is_promoted
+///
+/// Indicates whether each piece on the board is promoted or not.
+/// Only pieces that can be promoted are included here.
+/// If there are fewer than 34 promotable pieces on the board, fill the upper bits with 0.
+///
+/// ### is_black
+///
+/// Indicates the colors of pieces on the board except for kings and hand pieces.
+/// The colors are packed into bits corresponding to the pieces on the board
+/// and the pieces in hand.
+/// Lower bits correspond to pieces on the board, and higher bits correspond to pieces in hand.
+///
+/// ### hand pieces
+///
+/// The colors of hand pieces are packed into bits.
+/// Each piece type uses (num_black + num_white) bits, where
+/// num_black bits are set to 1, and num_white bits are set to 0.
+/// Piece types are packed in the order of
+/// Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PackedStateInfo([u64; 4]);
 
