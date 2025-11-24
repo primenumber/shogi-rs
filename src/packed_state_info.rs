@@ -91,28 +91,6 @@ use crate::{Bitboard, Color, Hand, Piece, PieceType};
 pub struct PackedStateInfo([u64; 4]);
 
 impl PackedStateInfo {
-    fn pack_by_occupied(state: &StateInfo) -> [u64; 14] {
-        [
-            PieceType::King,
-            PieceType::Rook,
-            PieceType::Bishop,
-            PieceType::Gold,
-            PieceType::Silver,
-            PieceType::Knight,
-            PieceType::Lance,
-            PieceType::Pawn,
-            PieceType::ProRook,
-            PieceType::ProBishop,
-            PieceType::ProSilver,
-            PieceType::ProKnight,
-            PieceType::ProLance,
-            PieceType::ProPawn,
-        ]
-        .map(|pt| state.type_bb[pt.index()].pext_u64(&state.occupied_bb))
-        .try_into()
-        .unwrap()
-    }
-
     // Pack hand pieces' colors into bits.
     // Each piece type uses (num_black + num_white) bits, where
     // num_black bits are set to 1, and num_white bits are set to 0.
@@ -411,60 +389,93 @@ impl PackedStateInfo {
         on_board + on_board_promoted + in_hand
     }
 
-    // Pack the given StateInfo into PackedStateInfo.
-    pub fn from_state_info<const VALIDATE: bool>(state: &StateInfo) -> Option<PackedStateInfo> {
-        if VALIDATE {
-            if state.occupied_bb.count() > 40 {
-                return None;
-            }
-            let pt_and_counts = [
-                (PieceType::Pawn, 18),
-                (PieceType::Lance, 4),
-                (PieceType::Knight, 4),
-                (PieceType::Silver, 4),
-                (PieceType::Gold, 4),
-                (PieceType::Bishop, 2),
-                (PieceType::Rook, 2),
-            ];
-            for (pt, expected_count) in pt_and_counts.iter() {
-                let count = PackedStateInfo::num_pieces(state, *pt);
-                if count != *expected_count {
-                    return None;
-                }
+    fn validate(state: &StateInfo) -> bool {
+        if state.occupied_bb.count() > 40 {
+            return false;
+        }
+        let pt_and_counts = [
+            (PieceType::Pawn, 18),
+            (PieceType::Lance, 4),
+            (PieceType::Knight, 4),
+            (PieceType::Silver, 4),
+            (PieceType::Gold, 4),
+            (PieceType::Bishop, 2),
+            (PieceType::Rook, 2),
+        ];
+        for (pt, expected_count) in pt_and_counts.iter() {
+            let count = PackedStateInfo::num_pieces(state, *pt);
+            if count != *expected_count {
+                return false;
             }
         }
+        true
+    }
 
-        let mut data = [0u64; 4];
+    fn encode_occupied_and_turn(state: &StateInfo) -> (u64, u64) {
         let mut occupied_low = state.occupied_bb.low();
         let mut occupied_high = state.occupied_bb.high();
         if state.side_to_move == Color::White {
             occupied_low = !occupied_low & 0x7fffffff_ffffffff; // 63bits
             occupied_high = !occupied_high & 0x00000000_0003ffff; // 18bits
         }
+        (occupied_low, occupied_high)
+    }
+
+    fn encode_promoted(state: &StateInfo) -> u64 {
+        let promoted_bb = state.type_bb[PieceType::ProPawn.index()]
+            | state.type_bb[PieceType::ProLance.index()]
+            | state.type_bb[PieceType::ProKnight.index()]
+            | state.type_bb[PieceType::ProSilver.index()]
+            | state.type_bb[PieceType::ProBishop.index()]
+            | state.type_bb[PieceType::ProRook.index()];
+        promoted_bb.pext_u64(&state.occupied_bb)
+    }
+
+    fn encode_piece_type(state: &StateInfo) -> [u64; 8] {
+        [
+            state.type_bb[PieceType::King.index()].pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Rook.index()] | state.type_bb[PieceType::ProRook.index()])
+                .pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Bishop.index()] | state.type_bb[PieceType::ProBishop.index()])
+                .pext_u64(&state.occupied_bb),
+            state.type_bb[PieceType::Gold.index()].pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Silver.index()] | state.type_bb[PieceType::ProSilver.index()])
+                .pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Knight.index()] | state.type_bb[PieceType::ProKnight.index()])
+                .pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Lance.index()] | state.type_bb[PieceType::ProLance.index()])
+                .pext_u64(&state.occupied_bb),
+            (state.type_bb[PieceType::Pawn.index()] | state.type_bb[PieceType::ProPawn.index()])
+                .pext_u64(&state.occupied_bb),
+        ]
+    }
+
+    // Pack the given StateInfo into PackedStateInfo.
+    pub fn from_state_info<const VALIDATE: bool>(state: &StateInfo) -> Option<PackedStateInfo> {
+        if VALIDATE {
+            if !PackedStateInfo::validate(state) {
+                return None;
+            }
+        }
+
+        let mut data = [0u64; 4];
+        let (occupied_low, occupied_high) = PackedStateInfo::encode_occupied_and_turn(state);
         let black_king_index = state.find_king(Color::Black).map(|sq| sq.index() as u8)?;
         let white_king_index = state.find_king(Color::White).map(|sq| sq.index() as u8)?;
-        let packed_bb = PackedStateInfo::pack_by_occupied(state);
 
         // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
         // order bits of the result
-        let promoted_packed = [
-            PieceType::ProPawn,
-            PieceType::ProLance,
-            PieceType::ProKnight,
-            PieceType::ProSilver,
-            PieceType::ProBishop,
-            PieceType::ProRook,
-        ]
-        .iter()
-        .fold(0u64, |accum, pt| &accum | packed_bb[pt.index()]);
-        let pawn_packed = &packed_bb[PieceType::Pawn.index()] | &packed_bb[PieceType::ProPawn.index()];
-        let lance_packed = &packed_bb[PieceType::Lance.index()] | &packed_bb[PieceType::ProLance.index()];
-        let knight_packed = &packed_bb[PieceType::Knight.index()] | &packed_bb[PieceType::ProKnight.index()];
-        let silver_packed = &packed_bb[PieceType::Silver.index()] | &packed_bb[PieceType::ProSilver.index()];
-        let gold_packed = &packed_bb[PieceType::Gold.index()];
-        let bishop_packed = &packed_bb[PieceType::Bishop.index()] | &packed_bb[PieceType::ProBishop.index()];
-        let rook_packed = &packed_bb[PieceType::Rook.index()] | &packed_bb[PieceType::ProRook.index()];
-        let king_packed = &packed_bb[PieceType::King.index()];
+        let promoted_packed = PackedStateInfo::encode_promoted(state);
+        let [
+            king_packed,
+            rook_packed,
+            bishop_packed,
+            gold_packed,
+            silver_packed,
+            knight_packed,
+            lance_packed,
+            pawn_packed,
+        ] = PackedStateInfo::encode_piece_type(state);
         if king_packed.count_ones() != 2 {
             return None;
         }
