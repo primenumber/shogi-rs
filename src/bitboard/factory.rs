@@ -54,7 +54,7 @@ impl Factory {
     pub fn rook_attack(sq: Square, occupied: &Bitboard) -> Bitboard {
         unsafe {
             let mask = &ROOK_BLOCK_MASK[sq.index()];
-            let index = occupied_to_index(&(occupied & mask), mask);
+            let index = occupied_to_index(&(*occupied & *mask), mask);
 
             ROOK_ATTACK_BB[ROOK_ATTACK_INDEX[sq.index()] + index]
         }
@@ -65,7 +65,7 @@ impl Factory {
     pub fn bishop_attack(sq: Square, occupied: &Bitboard) -> Bitboard {
         unsafe {
             let mask = &BISHOP_BLOCK_MASK[sq.index()];
-            let index = occupied_to_index(&(occupied & mask), mask);
+            let index = occupied_to_index(&(*occupied & *mask), mask);
 
             BISHOP_ATTACK_BB[BISHOP_ATTACK_INDEX[sq.index()] + index]
         }
@@ -75,8 +75,8 @@ impl Factory {
     #[inline(always)]
     pub fn lance_attack(c: Color, sq: Square, occupied: &Bitboard) -> Bitboard {
         unsafe {
-            let mask = &FILE_BB[sq.file() as usize] & &!&(&RANK1_BB | &RANK9_BB);
-            let index = occupied_to_index(&(occupied & &mask), &mask);
+            let mask = FILE_BB[sq.file() as usize] & !(RANK1_BB | RANK9_BB);
+            let index = occupied_to_index(&(*occupied & mask), &mask);
 
             LANCE_ATTACK_BB[c as usize][sq.index()][index]
         }
@@ -254,19 +254,19 @@ fn init_rook_block() {
         let file = sq.file();
         let rank = sq.rank();
 
-        let mut bb = &FILE_BB[file as usize] ^ &RANK_BB[rank as usize];
+        let mut bb = FILE_BB[file as usize] ^ RANK_BB[rank as usize];
 
         if file != 0 {
-            bb &= &!&FILE1_BB;
+            bb &= !FILE1_BB;
         }
         if file != 8 {
-            bb &= &!&FILE9_BB;
+            bb &= !FILE9_BB;
         }
         if rank != 0 {
-            bb &= &!&RANK1_BB;
+            bb &= !RANK1_BB;
         }
         if rank != 8 {
-            bb &= &!&RANK9_BB;
+            bb &= !RANK9_BB;
         }
 
         unsafe {
@@ -289,8 +289,8 @@ fn init_bishop_block() {
                 bb |= sq;
             }
         }
-        bb &= &!&(&(&(&FILE1_BB | &FILE9_BB) | &RANK1_BB) | &RANK9_BB);
-        bb &= &!&SQUARE_BB[bishop_sq.index()];
+        bb &= !(((FILE1_BB | FILE9_BB) | RANK1_BB) | RANK9_BB);
+        bb &= !SQUARE_BB[bishop_sq.index()];
 
         unsafe {
             BISHOP_BLOCK_MASK[bishop_sq.index()] = bb;
@@ -305,7 +305,7 @@ fn calc_beam_attack(piece_sq: Square, dirs: &[(i8, i8)], occupied: &Bitboard) ->
         while let Some(sq) = ptr.shift(dir.0, dir.1) {
             bb |= sq;
 
-            if (occupied & sq).is_any() {
+            if (*occupied & sq).is_any() {
                 break;
             }
 
@@ -323,14 +323,14 @@ fn init_rook_attack() {
     for sq in Square::iter() {
         unsafe {
             ROOK_ATTACK_INDEX[sq.index()] = index;
-            let block_mask = &ROOK_BLOCK_MASK[sq.index()];
+            let block_mask = ROOK_BLOCK_MASK[sq.index()];
 
             let bits = ROOK_BLOCK_BITS[sq.index()];
             for i in 0..(1 << bits) {
-                let occupied = index_to_occupied(i, bits, block_mask);
-                let masked_occupied = &occupied & block_mask;
+                let occupied = index_to_occupied(i, bits, &block_mask);
+                let masked_occupied = occupied & block_mask;
 
-                ROOK_ATTACK_BB[index + occupied_to_index(&masked_occupied, block_mask)] =
+                ROOK_ATTACK_BB[index + occupied_to_index(&masked_occupied, &block_mask)] =
                     calc_beam_attack(sq, &ROOK_DIRS, &occupied);
             }
 
@@ -346,14 +346,14 @@ fn init_bishop_attack() {
     for sq in Square::iter() {
         unsafe {
             BISHOP_ATTACK_INDEX[sq.index()] = index;
-            let block_mask = &BISHOP_BLOCK_MASK[sq.index()];
+            let block_mask = BISHOP_BLOCK_MASK[sq.index()];
 
             let bits = BISHOP_BLOCK_BITS[sq.index()];
             for i in 0..(1 << bits) {
-                let occupied = index_to_occupied(i, bits, block_mask);
-                let masked_occupied = &occupied & block_mask;
+                let occupied = index_to_occupied(i, bits, &block_mask);
+                let masked_occupied = occupied & block_mask;
 
-                BISHOP_ATTACK_BB[index + occupied_to_index(&masked_occupied, block_mask)] =
+                BISHOP_ATTACK_BB[index + occupied_to_index(&masked_occupied, &block_mask)] =
                     calc_beam_attack(sq, &BISHOP_DIRS, &occupied);
             }
 
@@ -366,7 +366,7 @@ fn init_king_attack() {
     let index = PieceType::King as usize;
 
     for sq in Square::iter() {
-        let bb = &Factory::rook_attack(sq, &FULL_BB) | &Factory::bishop_attack(sq, &FULL_BB);
+        let bb = Factory::rook_attack(sq, &FULL_BB) | Factory::bishop_attack(sq, &FULL_BB);
         unsafe {
             ATTACK_BB[index][0][sq.index()] = bb;
             ATTACK_BB[index][1][sq.index()] = bb;
@@ -383,9 +383,9 @@ fn init_gold_attack() {
 
         for sq in Square::iter() {
             unsafe {
-                let bb = &(&ATTACK_BB[king_index][color_index][sq.index()]
-                    & &IN_FRONT_BB[color_index][sq.rank() as usize])
-                    | &Factory::rook_attack(sq, &FULL_BB);
+                let bb = (ATTACK_BB[king_index][color_index][sq.index()]
+                    & IN_FRONT_BB[color_index][sq.rank() as usize])
+                    | Factory::rook_attack(sq, &FULL_BB);
                 ATTACK_BB[index][color_index][sq.index()] = bb;
             }
         }
@@ -401,9 +401,9 @@ fn init_silver_attack() {
 
         for sq in Square::iter() {
             unsafe {
-                let bb = &(&ATTACK_BB[king_index][color_index][sq.index()]
-                    & &IN_FRONT_BB[color_index][sq.rank() as usize])
-                    | &Factory::bishop_attack(sq, &FULL_BB);
+                let bb = (ATTACK_BB[king_index][color_index][sq.index()]
+                    & IN_FRONT_BB[color_index][sq.rank() as usize])
+                    | Factory::bishop_attack(sq, &FULL_BB);
                 ATTACK_BB[index][color_index][sq.index()] = bb;
             }
         }
@@ -420,7 +420,7 @@ fn init_pawn_attack() {
         for sq in Square::iter() {
             unsafe {
                 ATTACK_BB[index][color_index][sq.index()] =
-                    &ATTACK_BB[silver_index][color_index][sq.index()] ^ &Factory::bishop_attack(sq, &FULL_BB);
+                    ATTACK_BB[silver_index][color_index][sq.index()] ^ Factory::bishop_attack(sq, &FULL_BB);
             }
         }
     }
@@ -440,7 +440,7 @@ fn init_knight_attack() {
 
                 if pawn_bb.is_any() {
                     let psq = pawn_bb.pop();
-                    bb = &Factory::bishop_attack(psq, &FULL_BB) & &IN_FRONT_BB[color_index][sq.rank() as usize];
+                    bb = Factory::bishop_attack(psq, &FULL_BB) & IN_FRONT_BB[color_index][sq.rank() as usize];
                 }
                 ATTACK_BB[index][color_index][sq.index()] = bb;
             }
@@ -453,14 +453,14 @@ fn init_lance_attack() {
         let color_index = color2index(c);
 
         for sq in Square::iter() {
-            let block_mask = &FILE_BB[sq.file() as usize] & &!&(&RANK1_BB | &RANK9_BB);
+            let block_mask = FILE_BB[sq.file() as usize] & !(RANK1_BB | RANK9_BB);
 
             const BITS: usize = 7;
             for i in 0..1 << BITS {
                 let occupied = index_to_occupied(i, BITS, &block_mask);
                 unsafe {
                     LANCE_ATTACK_BB[color_index][sq.index()][i] =
-                        &Factory::rook_attack(sq, &occupied) & &IN_FRONT_BB[color_index][sq.rank() as usize];
+                        Factory::rook_attack(sq, &occupied) & IN_FRONT_BB[color_index][sq.rank() as usize];
                 }
             }
         }
@@ -479,10 +479,10 @@ fn init_between() {
             unsafe {
                 if df == 0 || dr == 0 {
                     BETWEEN_BB[from.index()][to.index()] =
-                        &Factory::rook_attack(from, &square_bb(to)) & &Factory::rook_attack(to, &square_bb(from));
+                        Factory::rook_attack(from, &square_bb(to)) & Factory::rook_attack(to, &square_bb(from));
                 } else if df.abs() == dr.abs() {
                     BETWEEN_BB[from.index()][to.index()] =
-                        &Factory::bishop_attack(from, &square_bb(to)) & &Factory::bishop_attack(to, &square_bb(from));
+                        Factory::bishop_attack(from, &square_bb(to)) & Factory::bishop_attack(to, &square_bb(from));
                 }
             }
         }

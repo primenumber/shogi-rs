@@ -148,8 +148,8 @@ impl PackedStateInfo {
     fn type_bb_to_piece_grid(bbs: &[Bitboard; 14], color_bb: &Bitboard) -> PieceGrid {
         let mut board = PieceGrid([None; 81]);
         for (pt, bb) in PieceType::iter().zip(bbs.iter()) {
-            let mut black_bb = bb & color_bb;
-            let mut white_bb = bb & &!color_bb;
+            let mut black_bb = *bb & *color_bb;
+            let mut white_bb = *bb & !*color_bb;
             while black_bb.is_any() {
                 let sq = black_bb.pop();
                 board.set(
@@ -390,7 +390,7 @@ impl PackedStateInfo {
             ply,
             side_to_move,
             occupied_bb,
-            color_bb: [color_bb.clone(), (&occupied_bb & &!&color_bb)],
+            color_bb: [color_bb.clone(), (occupied_bb & !color_bb)],
             type_bb,
         }
     }

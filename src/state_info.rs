@@ -68,7 +68,7 @@ impl StateInfo {
 
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
-        let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
+        let mut bb = self.type_bb[PieceType::King.index()] & self.color_bb[c.index()];
         if bb.is_any() { Some(bb.pop()) } else { None }
     }
 
@@ -95,7 +95,7 @@ impl StateInfo {
 
     /// Returns a bitboard containing pieces of the given type that attack the given square.
     pub(crate) fn get_attackers_of_type(&self, pt: PieceType, sq: Square, c: Color) -> Bitboard {
-        let bb = &self.type_bb[pt.index()] & &self.color_bb[c.index()];
+        let bb = self.type_bb[pt.index()] & self.color_bb[c.index()];
 
         if bb.is_empty() {
             return bb;
@@ -106,7 +106,7 @@ impl StateInfo {
             color: c,
         };
 
-        &bb & &self.move_candidates(sq, attack_pc.flip())
+        bb & self.move_candidates(sq, attack_pc.flip())
     }
 
     /// Returns a bitboard containing squares to where the given piece at the given square can move.
@@ -116,11 +116,10 @@ impl StateInfo {
             PieceType::Bishop => BBFactory::bishop_attack(sq, &self.occupied_bb),
             PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.occupied_bb),
             PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, &self.occupied_bb) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                BBFactory::rook_attack(sq, &self.occupied_bb) | BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProBishop => {
-                &BBFactory::bishop_attack(sq, &self.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                BBFactory::bishop_attack(sq, &self.occupied_bb) | BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
                 BBFactory::attacks_from(PieceType::Gold, p.color, sq)
@@ -128,7 +127,7 @@ impl StateInfo {
             pt => BBFactory::attacks_from(pt, p.color, sq),
         };
 
-        &bb & &!&self.color_bb[p.color.index()]
+        bb & !self.color_bb[p.color.index()]
     }
 
     /// Returns a bitboard containing squares where pieces are pinned.
@@ -147,13 +146,13 @@ impl StateInfo {
             (PieceType::Lance, BBFactory::lance_attack(c, ksq, &Bitboard::empty())),
         ]
         .iter()
-        .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
-            let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.flip().index()]) & mask;
+        .fold(Bitboard::empty(), |mut accum, &(pt, mask)| {
+            let bb = (self.type_bb[pt.index()] & self.color_bb[c.flip().index()]) & mask;
 
             for psq in bb {
-                let between = &BBFactory::between(ksq, psq) & &self.occupied_bb;
-                if between.count() == 1 && (&between & &self.color_bb[c.index()]).is_any() {
-                    accum |= &between;
+                let between = BBFactory::between(ksq, psq) & self.occupied_bb;
+                if between.count() == 1 && (between & self.color_bb[c.index()]).is_any() {
+                    accum |= between;
                 }
             }
 
@@ -183,7 +182,7 @@ impl StateInfo {
                     _ => 1,
                 };
 
-                let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()]) & &BBFactory::promote_zone(c);
+                let bb = (self.type_bb[pt.index()] & self.color_bb[c.index()]) & BBFactory::promote_zone(c);
                 let count = bb.count() as u8;
                 let point = count * unit;
 
@@ -568,7 +567,7 @@ impl StateInfo {
                         let not_attacked = PieceType::iter()
                             .filter(|&pt| pt != PieceType::King)
                             .flat_map(|pt| self.get_attackers_of_type(pt, to, opponent))
-                            .all(|sq| (&pinned & sq).is_any());
+                            .all(|sq| (pinned & sq).is_any());
 
                         if not_attacked {
                             // the dropped pawn may block bishop's moves
@@ -786,12 +785,12 @@ mod tests {
 
             assert_eq!(case.1.len(), black.count() as usize);
             for sq in case.1 {
-                assert!((black & *sq).is_any());
+                assert!((*black & *sq).is_any());
             }
 
             assert_eq!(case.2.len(), white.count() as usize);
             for sq in case.2 {
-                assert!((white & *sq).is_any());
+                assert!((*white & *sq).is_any());
             }
         }
     }
@@ -811,12 +810,12 @@ mod tests {
 
             assert_eq!(case.1.len(), black.count());
             for sq in case.1 {
-                assert!((&black & *sq).is_any());
+                assert!((black & *sq).is_any());
             }
 
             assert_eq!(case.2.len(), white.count());
             for sq in case.2 {
-                assert!((&white & *sq).is_any());
+                assert!((white & *sq).is_any());
             }
         }
     }

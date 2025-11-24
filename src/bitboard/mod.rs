@@ -61,7 +61,7 @@ impl Bitboard {
     /// Sets the given square as empty.
     #[inline(always)]
     pub fn clear_at(&mut self, sq: Square) {
-        *self &= &!&square_bb(sq)
+        *self &= !square_bb(sq)
     }
 
     /// Sets the first filled square as empty and returns that square.
@@ -191,7 +191,7 @@ impl Bitboard {
 // Operator implementations
 /////////////////////////////////////////////////////////////////////////////
 
-impl<'a> ops::Not for &'a Bitboard {
+impl<'a> ops::Not for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
@@ -202,108 +202,108 @@ impl<'a> ops::Not for &'a Bitboard {
     }
 }
 
-impl<'a, 'b> ops::BitAnd<&'a Bitboard> for &'b Bitboard {
+impl<'a, 'b> ops::BitAnd<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
-    fn bitand(self, rhs: &'a Bitboard) -> Bitboard {
+    fn bitand(self, rhs: Bitboard) -> Bitboard {
         Bitboard {
             p: [self.p[0] & rhs.p[0], self.p[1] & rhs.p[1]],
         }
     }
 }
 
-impl<'a> ops::BitAndAssign<&'a Bitboard> for Bitboard {
+impl<'a> ops::BitAndAssign<Bitboard> for Bitboard {
     #[inline(always)]
-    fn bitand_assign(&mut self, rhs: &'a Bitboard) {
+    fn bitand_assign(&mut self, rhs: Bitboard) {
         self.p[0] &= rhs.p[0];
         self.p[1] &= rhs.p[1];
     }
 }
 
-impl<'a, 'b> ops::BitOr<&'a Bitboard> for &'b Bitboard {
+impl<'a, 'b> ops::BitOr<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
-    fn bitor(self, rhs: &'a Bitboard) -> Bitboard {
+    fn bitor(self, rhs: Bitboard) -> Bitboard {
         Bitboard {
             p: [self.p[0] | rhs.p[0], self.p[1] | rhs.p[1]],
         }
     }
 }
 
-impl<'a> ops::BitOrAssign<&'a Bitboard> for Bitboard {
+impl<'a> ops::BitOrAssign<Bitboard> for Bitboard {
     #[inline(always)]
-    fn bitor_assign(&mut self, rhs: &'a Bitboard) {
+    fn bitor_assign(&mut self, rhs: Bitboard) {
         self.p[0] |= rhs.p[0];
         self.p[1] |= rhs.p[1];
     }
 }
 
-impl<'a, 'b> ops::BitXor<&'a Bitboard> for &'b Bitboard {
+impl<'a, 'b> ops::BitXor<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
-    fn bitxor(self, rhs: &'a Bitboard) -> Bitboard {
+    fn bitxor(self, rhs: Bitboard) -> Bitboard {
         Bitboard {
             p: [self.p[0] ^ rhs.p[0], self.p[1] ^ rhs.p[1]],
         }
     }
 }
 
-impl<'a> ops::BitXorAssign<&'a Bitboard> for Bitboard {
+impl<'a> ops::BitXorAssign<Bitboard> for Bitboard {
     #[inline(always)]
-    fn bitxor_assign(&mut self, rhs: &'a Bitboard) {
+    fn bitxor_assign(&mut self, rhs: Bitboard) {
         self.p[0] ^= rhs.p[0];
         self.p[1] ^= rhs.p[1];
     }
 }
 
-impl<'a> ops::BitAnd<Square> for &'a Bitboard {
+impl<'a> ops::BitAnd<Square> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
     fn bitand(self, rhs: Square) -> Bitboard {
-        self & &square_bb(rhs)
+        self & square_bb(rhs)
     }
 }
 
 impl ops::BitAndAssign<Square> for Bitboard {
     #[inline(always)]
     fn bitand_assign(&mut self, rhs: Square) {
-        *self &= &square_bb(rhs)
+        *self &= square_bb(rhs)
     }
 }
 
-impl<'a> ops::BitOr<Square> for &'a Bitboard {
+impl<'a> ops::BitOr<Square> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
     fn bitor(self, rhs: Square) -> Bitboard {
-        self | &square_bb(rhs)
+        self | square_bb(rhs)
     }
 }
 
 impl ops::BitOrAssign<Square> for Bitboard {
     #[inline(always)]
     fn bitor_assign(&mut self, rhs: Square) {
-        *self |= &square_bb(rhs)
+        *self |= square_bb(rhs)
     }
 }
 
-impl<'a> ops::BitXor<Square> for &'a Bitboard {
+impl<'a> ops::BitXor<Square> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
     fn bitxor(self, rhs: Square) -> Bitboard {
-        self ^ &square_bb(rhs)
+        self ^ square_bb(rhs)
     }
 }
 
 impl ops::BitXorAssign<Square> for Bitboard {
     #[inline(always)]
     fn bitxor_assign(&mut self, rhs: Square) {
-        *self ^= &square_bb(rhs)
+        *self ^= square_bb(rhs)
     }
 }
 
@@ -320,7 +320,7 @@ impl fmt::Display for Bitboard {
             write!(f, "|")?;
             for file in (0..9).rev() {
                 let sq = Square::new(file, rank).unwrap();
-                write!(f, " {} |", if (self & sq).is_empty() { " " } else { "X" })?;
+                write!(f, " {} |", if (*self & sq).is_empty() { " " } else { "X" })?;
             }
             writeln!(f, " {}", (b'a' + rank) as char)?;
             writeln!(f, "+---+---+---+---+---+---+---+---+---+")?;
