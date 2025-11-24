@@ -110,6 +110,14 @@ impl PieceType {
     pub fn index(self) -> usize {
         self as usize
     }
+
+    #[inline(always)]
+    pub fn from_index(index: usize) -> Option<Self> {
+        if index >= 14 {
+            return None;
+        }
+        Some(unsafe { std::mem::transmute(index as u8) })
+    }
 }
 
 impl fmt::Display for PieceType {
@@ -160,25 +168,16 @@ impl iter::Iterator for PieceTypeIter {
         let current = self.current;
 
         if let Some(current) = self.current {
-            self.current = match current {
-                PieceType::King => Some(PieceType::Rook),
-                PieceType::Rook => Some(PieceType::Bishop),
-                PieceType::Bishop => Some(PieceType::Gold),
-                PieceType::Gold => Some(PieceType::Silver),
-                PieceType::Silver => Some(PieceType::Knight),
-                PieceType::Knight => Some(PieceType::Lance),
-                PieceType::Lance => Some(PieceType::Pawn),
-                PieceType::Pawn => Some(PieceType::ProRook),
-                PieceType::ProRook => Some(PieceType::ProBishop),
-                PieceType::ProBishop => Some(PieceType::ProSilver),
-                PieceType::ProSilver => Some(PieceType::ProKnight),
-                PieceType::ProKnight => Some(PieceType::ProLance),
-                PieceType::ProLance => Some(PieceType::ProPawn),
-                PieceType::ProPawn => None,
-            };
+            self.current = PieceType::from_index(current.index() + 1);
         }
 
         current
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.current.map_or(0, |pt| 14 - pt.index());
+
+        (len, Some(len))
     }
 }
 
