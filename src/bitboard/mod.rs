@@ -64,12 +64,6 @@ impl Bitboard {
         *self &= &!&square_bb(sq)
     }
 
-    /// Returns the number of squares filled.
-    #[inline(always)]
-    pub fn count(&self) -> u32 {
-        self.p[0].count_ones() + self.p[1].count_ones()
-    }
-
     /// Sets the first filled square as empty and returns that square.
     ///
     /// This method expects the bitboard not being empty.
@@ -342,6 +336,12 @@ impl iter::Iterator for Bitboard {
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_any() { Some(self.pop()) } else { None }
+    }
+
+    /// Returns the number of squares filled.
+    #[inline(always)]
+    fn count(self) -> usize {
+        (self.p[0].count_ones() + self.p[1].count_ones()) as usize
     }
 }
 
