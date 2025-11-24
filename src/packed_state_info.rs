@@ -361,7 +361,7 @@ impl PackedStateInfo {
         promoted_bb.pext_u64(&state.occupied_bb)
     }
 
-    fn encode_piece_type(state: &StateInfo) -> [u64; 8] {
+    fn pack_board_pieces(state: &StateInfo) -> [u64; 8] {
         [
             state.type_bb[PieceType::King.index()].pext_u64(&state.occupied_bb),
             (state.type_bb[PieceType::Rook.index()] | state.type_bb[PieceType::ProRook.index()])
@@ -380,6 +380,38 @@ impl PackedStateInfo {
         ]
     }
 
+    fn encode_board_pieces(state: &StateInfo, data: &mut [u64; 4]) -> [u64; 8] {
+        let pieces_packed = PackedStateInfo::pack_board_pieces(state);
+        let [
+            king_packed,
+            rook_packed,
+            bishop_packed,
+            gold_packed,
+            silver_packed,
+            knight_packed,
+            lance_packed,
+            pawn_packed,
+        ] = pieces_packed;
+
+        let lance_or_knight = lance_packed | knight_packed;
+        let silver_or_gold = silver_packed | gold_packed;
+        let bishop_or_rook = bishop_packed | rook_packed;
+        let kbr_packed = king_packed | bishop_or_rook;
+        let kbrsg_packed = kbr_packed | silver_or_gold;
+
+        data[1] ^= silver_packed.pext(silver_or_gold) << 18;
+
+        data[2] ^= pawn_packed;
+        data[2] ^= silver_or_gold.pext(kbrsg_packed) << 40;
+        data[2] ^= bishop_or_rook.pext(kbr_packed) << 54;
+        data[2] ^= bishop_packed.pext(bishop_or_rook) << 60;
+
+        data[3] ^= lance_or_knight.pext(!pawn_packed) << 34;
+        data[3] ^= lance_packed.pext(lance_or_knight) << 56;
+
+        pieces_packed
+    }
+
     // Pack hand pieces' colors into bits.
     // Each piece type uses (num_black + num_white) bits, where
     // num_black bits are set to 1, and num_white bits are set to 0.
@@ -389,35 +421,24 @@ impl PackedStateInfo {
         let mut accum = 0u64;
         // the order is reversed
         let pts = [
-            PieceType::Rook,
-            PieceType::Bishop,
-            PieceType::Gold,
-            PieceType::Silver,
-            PieceType::Knight,
-            PieceType::Lance,
-            PieceType::Pawn,
+            (PieceType::Rook, 2),
+            (PieceType::Bishop, 2),
+            (PieceType::Gold, 4),
+            (PieceType::Silver, 4),
+            (PieceType::Knight, 4),
+            (PieceType::Lance, 4),
+            (PieceType::Pawn, 18),
         ];
-        for pt in pts.iter() {
+        for (pt, num_pieces) in pts.iter() {
             let num_black = state.hand.get(Piece {
                 piece_type: *pt,
                 color: Color::Black,
-            }) as u64;
+            });
             let num_white = state.hand.get(Piece {
                 piece_type: *pt,
                 color: Color::White,
-            }) as u64;
-            if num_black + num_white + packed_pieces[pt.index()].count_ones() as u64
-                != match pt {
-                    PieceType::Pawn => 18,
-                    PieceType::Lance => 4,
-                    PieceType::Knight => 4,
-                    PieceType::Silver => 4,
-                    PieceType::Gold => 4,
-                    PieceType::Bishop => 2,
-                    PieceType::Rook => 2,
-                    _ => return None,
-                }
-            {
+            });
+            if num_black + num_white + packed_pieces[pt.index()].count_ones() as u8 != *num_pieces {
                 return None;
             }
             accum <<= num_black + num_white;
@@ -440,27 +461,13 @@ impl PackedStateInfo {
         // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
         // order bits of the result
         let promoted_packed = PackedStateInfo::encode_promoted(state);
-        let pieces_packed = PackedStateInfo::encode_piece_type(state);
-        let [
-            king_packed,
-            rook_packed,
-            bishop_packed,
-            gold_packed,
-            silver_packed,
-            knight_packed,
-            lance_packed,
-            pawn_packed,
-        ] = pieces_packed;
+        let pieces_packed = PackedStateInfo::encode_board_pieces(state, &mut data);
+        let king_packed = pieces_packed[0];
+        let gold_packed = pieces_packed[3];
         if king_packed.count_ones() != 2 {
             return None;
         }
         let promoted_packed = promoted_packed.pext(!(king_packed | gold_packed));
-
-        let lance_or_knight = lance_packed | knight_packed;
-        let silver_or_gold = silver_packed | gold_packed;
-        let bishop_or_rook = bishop_packed | rook_packed;
-        let kbr_packed = king_packed | bishop_or_rook;
-        let kbrsg_packed = kbr_packed | silver_or_gold;
 
         let color_packed_board = state.color_bb[Color::Black.index()]
             .pext_u64(&state.occupied_bb)
@@ -468,24 +475,13 @@ impl PackedStateInfo {
         let color_packed_hand = PackedStateInfo::encode_hand_colors(state, pieces_packed)?;
         let color_packed =
             color_packed_board | (color_packed_hand << (state.occupied_bb.count() as u32 - king_packed.count_ones()));
+        let king_order = if black_king_index < white_king_index { 1 } else { 0 };
 
-        data[0] = occupied_low;
-        if black_king_index < white_king_index {
-            data[0] |= 0x8000_0000_0000_0000; // set MSB to 1
-        }
-
-        data[1] = occupied_high;
-        data[1] |= silver_packed.pext(silver_or_gold) << 18;
-        data[1] |= color_packed << 26;
-
-        data[2] = pawn_packed;
-        data[2] |= silver_or_gold.pext(kbrsg_packed) << 40;
-        data[2] |= bishop_or_rook.pext(kbr_packed) << 54;
-        data[2] |= bishop_packed.pext(bishop_or_rook) << 60;
-
-        data[3] = promoted_packed;
-        data[3] |= lance_or_knight.pext(!pawn_packed) << 34;
-        data[3] |= lance_packed.pext(lance_or_knight) << 56;
+        data[0] ^= occupied_low;
+        data[0] ^= king_order << 63;
+        data[1] ^= occupied_high;
+        data[1] ^= color_packed << 26;
+        data[3] ^= promoted_packed;
         Some(PackedStateInfo(data))
     }
 }
