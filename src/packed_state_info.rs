@@ -91,38 +91,6 @@ use crate::{Bitboard, Color, Hand, Piece, PieceType};
 pub struct PackedStateInfo([u64; 4]);
 
 impl PackedStateInfo {
-    // Pack hand pieces' colors into bits.
-    // Each piece type uses (num_black + num_white) bits, where
-    // num_black bits are set to 1, and num_white bits are set to 0.
-    // piece types are packed in the order of
-    // Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
-    fn packed_hand_colors(state: &StateInfo) -> u64 {
-        // the order is reversed
-        [
-            PieceType::Rook,
-            PieceType::Bishop,
-            PieceType::Gold,
-            PieceType::Silver,
-            PieceType::Knight,
-            PieceType::Lance,
-            PieceType::Pawn,
-        ]
-        .iter()
-        .fold(0u64, |mut accum, &pt| {
-            let num_black = state.hand.get(Piece {
-                piece_type: pt,
-                color: Color::Black,
-            }) as u64;
-            let num_white = state.hand.get(Piece {
-                piece_type: pt,
-                color: Color::White,
-            }) as u64;
-            accum <<= num_black + num_white;
-            accum |= (1u64 << num_black) - 1;
-            accum
-        })
-    }
-
     fn type_bb_to_piece_grid(bbs: &[Bitboard; 14], color_bb: &Bitboard) -> PieceGrid {
         let mut board = PieceGrid([None; 81]);
         for (pt, bb) in PieceType::iter().zip(bbs.iter()) {
@@ -373,40 +341,9 @@ impl PackedStateInfo {
         }
     }
 
-    fn num_pieces(state: &StateInfo, pt: PieceType) -> u32 {
-        let on_board = state.type_bb[pt.index()].count() as u32;
-        let on_board_promoted = pt
-            .promote()
-            .map_or(0, |promoted_pt| state.type_bb[promoted_pt.index()].count() as u32);
-        let in_hand = state.hand.get(Piece {
-            piece_type: pt,
-            color: Color::Black,
-        }) as u32
-            + state.hand.get(Piece {
-                piece_type: pt,
-                color: Color::White,
-            }) as u32;
-        on_board + on_board_promoted + in_hand
-    }
-
     fn validate(state: &StateInfo) -> bool {
         if state.occupied_bb.count() > 40 {
             return false;
-        }
-        let pt_and_counts = [
-            (PieceType::Pawn, 18),
-            (PieceType::Lance, 4),
-            (PieceType::Knight, 4),
-            (PieceType::Silver, 4),
-            (PieceType::Gold, 4),
-            (PieceType::Bishop, 2),
-            (PieceType::Rook, 2),
-        ];
-        for (pt, expected_count) in pt_and_counts.iter() {
-            let count = PackedStateInfo::num_pieces(state, *pt);
-            if count != *expected_count {
-                return false;
-            }
         }
         true
     }
@@ -450,6 +387,52 @@ impl PackedStateInfo {
         ]
     }
 
+    // Pack hand pieces' colors into bits.
+    // Each piece type uses (num_black + num_white) bits, where
+    // num_black bits are set to 1, and num_white bits are set to 0.
+    // piece types are packed in the order of
+    // Pawn, Lance, Knight, Silver, Gold, Bishop, Rook (from LSB to MSB).
+    fn encode_hand_colors(state: &StateInfo, packed_pieces: [u64; 8]) -> Option<u64> {
+        let mut accum = 0u64;
+        // the order is reversed
+        let pts = [
+            PieceType::Rook,
+            PieceType::Bishop,
+            PieceType::Gold,
+            PieceType::Silver,
+            PieceType::Knight,
+            PieceType::Lance,
+            PieceType::Pawn,
+        ];
+        for pt in pts.iter() {
+            let num_black = state.hand.get(Piece {
+                piece_type: *pt,
+                color: Color::Black,
+            }) as u64;
+            let num_white = state.hand.get(Piece {
+                piece_type: *pt,
+                color: Color::White,
+            }) as u64;
+            if num_black + num_white + packed_pieces[pt.index()].count_ones() as u64
+                != match pt {
+                    PieceType::Pawn => 18,
+                    PieceType::Lance => 4,
+                    PieceType::Knight => 4,
+                    PieceType::Silver => 4,
+                    PieceType::Gold => 4,
+                    PieceType::Bishop => 2,
+                    PieceType::Rook => 2,
+                    _ => return None,
+                }
+            {
+                return None;
+            }
+            accum <<= num_black + num_white;
+            accum |= (1u64 << num_black) - 1;
+        }
+        Some(accum)
+    }
+
     // Pack the given StateInfo into PackedStateInfo.
     pub fn from_state_info<const VALIDATE: bool>(state: &StateInfo) -> Option<PackedStateInfo> {
         if VALIDATE {
@@ -466,6 +449,7 @@ impl PackedStateInfo {
         // Because occupied_bb.count() <= 40 is guaranteed, it is sufficient to take the low
         // order bits of the result
         let promoted_packed = PackedStateInfo::encode_promoted(state);
+        let pieces_packed = PackedStateInfo::encode_piece_type(state);
         let [
             king_packed,
             rook_packed,
@@ -475,21 +459,22 @@ impl PackedStateInfo {
             knight_packed,
             lance_packed,
             pawn_packed,
-        ] = PackedStateInfo::encode_piece_type(state);
+        ] = pieces_packed;
         if king_packed.count_ones() != 2 {
             return None;
         }
+        let promoted_packed = promoted_packed.pext(!(king_packed | gold_packed));
+
         let lance_or_knight = lance_packed | knight_packed;
         let silver_or_gold = silver_packed | gold_packed;
         let bishop_or_rook = bishop_packed | rook_packed;
-        let promoted_packed = promoted_packed.pext(!(king_packed | gold_packed));
         let kbr_packed = king_packed | bishop_or_rook;
         let kbrsg_packed = kbr_packed | silver_or_gold;
 
         let color_packed_board = state.color_bb[Color::Black.index()]
             .pext_u64(&state.occupied_bb)
             .pext(!king_packed);
-        let color_packed_hand = PackedStateInfo::packed_hand_colors(state);
+        let color_packed_hand = PackedStateInfo::encode_hand_colors(state, pieces_packed)?;
         let color_packed =
             color_packed_board | (color_packed_hand << (state.occupied_bb.count() as u32 - king_packed.count_ones()));
 
