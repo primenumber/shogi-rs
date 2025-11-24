@@ -341,13 +341,6 @@ impl PackedStateInfo {
         }
     }
 
-    fn validate(state: &StateInfo) -> bool {
-        if state.occupied_bb.count() > 40 {
-            return false;
-        }
-        true
-    }
-
     fn encode_occupied_and_turn(state: &StateInfo) -> (u64, u64) {
         let mut occupied_low = state.occupied_bb.low();
         let mut occupied_high = state.occupied_bb.high();
@@ -434,11 +427,9 @@ impl PackedStateInfo {
     }
 
     // Pack the given StateInfo into PackedStateInfo.
-    pub fn from_state_info<const VALIDATE: bool>(state: &StateInfo) -> Option<PackedStateInfo> {
-        if VALIDATE {
-            if !PackedStateInfo::validate(state) {
-                return None;
-            }
+    pub fn from_state_info(state: &StateInfo) -> Option<PackedStateInfo> {
+        if state.occupied_bb.count() > 40 {
+            return None;
         }
 
         let mut data = [0u64; 4];
@@ -507,7 +498,7 @@ pub(crate) enum SerializedStateInfo {
 
 impl SerializedStateInfo {
     pub(crate) fn from_state_info(state: &StateInfo) -> SerializedStateInfo {
-        if let Some(packed) = PackedStateInfo::from_state_info::<true>(state) {
+        if let Some(packed) = PackedStateInfo::from_state_info(state) {
             SerializedStateInfo::Packed(packed)
         } else {
             SerializedStateInfo::FallbackedSfen(state.generate_sfen().split(" ").take(3).join(" "))
