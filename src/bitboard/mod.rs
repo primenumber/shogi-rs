@@ -80,6 +80,18 @@ impl Bitboard {
         }
     }
 
+    /// Returns the first filled square without modifying the bitboard.
+    #[inline(always)]
+    pub fn peek(&self) -> Option<Square> {
+        if self.p[0] != 0 {
+            Some(Square::from_index(self.p[0].trailing_zeros() as u8).unwrap())
+        } else if self.p[1] != 0 {
+            Some(Square::from_index(self.p[1].trailing_zeros() as u8 + 63).unwrap())
+        } else {
+            None
+        }
+    }
+
     #[inline(always)]
     fn merge(&self) -> u64 {
         self.p[0] | self.p[1]
