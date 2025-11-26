@@ -5,6 +5,7 @@ use crate::bitboard::Factory as BBFactory;
 use crate::position::MoveRecord;
 use crate::{Bitboard, Color, Hand, MoveError, Piece, PieceType, SfenError, Square};
 
+#[derive(Clone)]
 pub struct PieceGrid(pub(crate) [Option<Piece>; 81]);
 
 impl PieceGrid {
@@ -29,7 +30,7 @@ impl fmt::Debug for PieceGrid {
 }
 
 /// Represents the current board state (without history).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StateInfo {
     pub(crate) board: PieceGrid,
     pub(crate) hand: Hand,

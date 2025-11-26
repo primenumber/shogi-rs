@@ -131,6 +131,11 @@ impl Position {
         &self.move_history
     }
 
+    /// Returns the current state information.
+    pub fn state_info(&self) -> &StateInfo {
+        &self.state
+    }
+
     /// Checks if a player with the given color can declare winning.
     ///
     /// See [the section 25 in 世界コンピュータ将棋選手権 大会ルール][csa] for more detail.
