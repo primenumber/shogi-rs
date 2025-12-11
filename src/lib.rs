@@ -42,6 +42,7 @@ pub mod position;
 pub mod square;
 pub mod state_info;
 pub mod time;
+pub mod zobrist;
 
 pub use self::bitboard::Bitboard;
 pub use self::color::Color;
@@ -54,3 +55,4 @@ pub use self::position::{MoveRecord, Position};
 pub use self::square::Square;
 pub use self::state_info::StateInfo;
 pub use self::time::TimeControl;
+pub use self::zobrist::ZobristHash;
