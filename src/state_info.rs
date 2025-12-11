@@ -69,8 +69,8 @@ impl StateInfo {
 
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
-        let mut bb = self.type_bb[PieceType::King.index()] & self.color_bb[c.index()];
-        if bb.is_any() { Some(bb.pop()) } else { None }
+        let bb = self.type_bb[PieceType::King.index()] & self.color_bb[c.index()];
+        bb.peek()
     }
 
     /// Sets a piece at the given square.
