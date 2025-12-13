@@ -658,6 +658,71 @@ impl Position {
         &bb & &!&self.color_bb[p.color.index()]
     }
 
+    fn all_normal_move_candidates(&self, from: Square, p: Piece) -> Vec<Move> {
+        let mut moves = Vec::new();
+        let targets = self.move_candidates(from, p);
+
+        for to in targets {
+            let promoteable = from.in_promotion_zone(p.color) || to.in_promotion_zone(p.color);
+            if p.piece_type.promote().is_some() && promoteable {
+                moves.push(Move::Normal {
+                    from,
+                    to,
+                    promote: false,
+                });
+                moves.push(Move::Normal {
+                    from,
+                    to,
+                    promote: true,
+                });
+            } else {
+                moves.push(Move::Normal {
+                    from,
+                    to,
+                    promote: false,
+                });
+            }
+        }
+
+        moves
+    }
+
+    fn all_drop_move_candidates(&self, c: Color) -> Vec<Move> {
+        let mut moves = Vec::new();
+
+        for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
+            let pc = Piece {
+                piece_type: pt,
+                color: c,
+            };
+            let n = self.hand.get(pc);
+            if n == 0 {
+                continue;
+            }
+
+            for to in Square::iter() {
+                if pc.is_placeable_at(to) && self.piece_at(to).is_none() {
+                    moves.push(Move::Drop { to, piece_type: pt });
+                }
+            }
+        }
+
+        moves
+    }
+
+    pub fn all_move_candidates(&self, c: Color) -> Vec<Move> {
+        let mut moves = Vec::new();
+
+        for sq in self.color_bb[c.index()] {
+            let pc = self.piece_at(sq).unwrap();
+            moves.extend(self.all_normal_move_candidates(sq, pc));
+        }
+
+        moves.extend(self.all_drop_move_candidates(c));
+
+        moves
+    }
+
     fn detect_repetition(&self) -> Result<(), MoveError> {
         if self.sfen_history.len() < 9 {
             return Ok(());

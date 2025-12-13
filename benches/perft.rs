@@ -13,16 +13,16 @@ fn bench_perft(c: &mut Criterion) {
 }
 
 fn perft(pos: &Position) {
+    let mut pos = pos.clone();
     let mut cnt = 0;
 
-    for sq in Square::iter() {
-        let pc = pos.piece_at(sq);
-
-        if let Some(ref pc) = *pc {
-            if pc.color == Color::White {
-                let bb = pos.move_candidates(sq, *pc);
-                cnt += bb.count();
+    for m in pos.all_move_candidates(pos.side_to_move()) {
+        match pos.make_move(m) {
+            Ok(_) => {
+                cnt += 1;
+                pos.unmake_move();
             }
+            Err(_) => {}
         }
     }
 
