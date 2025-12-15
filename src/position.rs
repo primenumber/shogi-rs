@@ -6,7 +6,7 @@ use crate::bitboard::Factory as BBFactory;
 use crate::{Bitboard, Color, Hand, Move, MoveError, Piece, PieceType, SfenError, Square};
 
 /// MoveRecord stores information necessary to undo the move.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MoveRecord {
     Normal {
         from: Square,
@@ -60,6 +60,7 @@ impl PartialEq<Move> for MoveRecord {
     }
 }
 
+#[derive(Clone)]
 struct PieceGrid([Option<Piece>; 81]);
 
 impl PieceGrid {
@@ -101,7 +102,7 @@ impl fmt::Debug for PieceGrid {
 ///
 /// assert_eq!("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1 moves 7g7f", pos.to_sfen());
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Position {
     board: PieceGrid,
     hand: Hand,

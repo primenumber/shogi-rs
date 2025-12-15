@@ -20,13 +20,13 @@ fn perft(pos: &Position) {
         match pos.make_move(m) {
             Ok(_) => {
                 cnt += 1;
-                pos.unmake_move();
+                let _ = pos.unmake_move();
             }
             Err(_) => {}
         }
     }
 
-    assert_eq!(32, cnt);
+    assert_eq!(207, cnt);
 }
 
 criterion_group!(benches, bench_perft);
