@@ -8,25 +8,38 @@ fn bench_perft(c: &mut Criterion) {
     let mut pos = Position::new();
     pos.set_sfen("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1")
         .expect("failed to parse SFEN string");
+    let depth = 2;
+    let expected_count = 28684;
 
-    c.bench_function("perft", |b| b.iter(|| perft(&pos)));
+    c.bench_function("perft", |b| {
+        b.iter(|| test_perft(&pos, depth, expected_count))
+    });
 }
 
-fn perft(pos: &Position) {
+fn test_perft(pos: &Position, depth: usize, expected_count: usize) {
     let mut pos = pos.clone();
+    let cnt = perft(&mut pos, depth);
+
+    assert_eq!(expected_count, cnt);
+}
+
+fn perft(pos: &mut Position, depth: usize) -> usize {
+    if depth == 0 {
+        return 1;
+    }
     let mut cnt = 0;
 
     for m in pos.all_move_candidates(pos.side_to_move()) {
         match pos.make_move(m) {
             Ok(_) => {
-                cnt += 1;
+                cnt += perft(pos, depth - 1);
                 let _ = pos.unmake_move();
             }
             Err(_) => {}
         }
     }
 
-    assert_eq!(207, cnt);
+    cnt
 }
 
 criterion_group!(benches, bench_perft);
