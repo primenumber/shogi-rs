@@ -666,11 +666,13 @@ impl Position {
         for to in targets {
             let promoteable = from.in_promotion_zone(p.color) || to.in_promotion_zone(p.color);
             if p.piece_type.promote().is_some() && promoteable {
-                moves.push(Move::Normal {
-                    from,
-                    to,
-                    promote: false,
-                });
+                if p.is_placeable_at(to) {
+                    moves.push(Move::Normal {
+                        from,
+                        to,
+                        promote: false,
+                    });
+                }
                 moves.push(Move::Normal {
                     from,
                     to,
