@@ -41,6 +41,7 @@ impl Factory {
         init_knight_attack();
         init_lance_attack();
         init_between();
+        crate::zobrist::init();
     }
 
     /// Returns a bitboard in which squares attacked by the given piece are filled.

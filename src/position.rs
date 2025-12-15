@@ -3,6 +3,7 @@ use std::fmt;
 use std::fmt::Write as _;
 
 use crate::bitboard::Factory as BBFactory;
+use crate::zobrist::{self, ZobristHash};
 use crate::{Bitboard, Color, Hand, Move, MoveError, Piece, PieceType, SfenError, Square};
 
 /// MoveRecord stores information necessary to undo the move.
@@ -109,7 +110,9 @@ pub struct Position {
     ply: u16,
     side_to_move: Color,
     move_history: Vec<MoveRecord>,
-    sfen_history: Vec<(String, u16)>,
+    hash_history: Vec<(ZobristHash, u16)>,
+    hash: ZobristHash,
+    initial_sfen: Option<String>,
     occupied_bb: Bitboard,
     color_bb: [Bitboard; 2],
     type_bb: [Bitboard; 14],
@@ -277,14 +280,11 @@ impl Position {
     }
 
     fn log_position(&mut self) {
-        // TODO: SFEN string is used to represent a state of position, but any transformation which uniquely distinguish positions can be used here.
-        // Consider light-weight option if generating SFEN string for each move is time-consuming.
-        let sfen = self.generate_sfen().split(' ').take(3).join(" ");
         let in_check = self.in_check(self.side_to_move());
 
         let continuous_check = if in_check {
-            let past = if self.sfen_history.len() >= 2 {
-                let record = self.sfen_history.get(self.sfen_history.len() - 2).unwrap();
+            let past = if self.hash_history.len() >= 2 {
+                let record = self.hash_history.get(self.hash_history.len() - 2).unwrap();
                 record.1
             } else {
                 0
@@ -294,7 +294,38 @@ impl Position {
             0
         };
 
-        self.sfen_history.push((sfen, continuous_check));
+        self.hash_history.push((self.hash, continuous_check));
+    }
+
+    /// Computes the Zobrist hash for the current position from scratch.
+    fn compute_hash(&self) -> ZobristHash {
+        let mut hash: ZobristHash = 0;
+
+        // Hash board pieces
+        for sq in Square::iter() {
+            if let Some(piece) = *self.piece_at(sq) {
+                hash ^= zobrist::board_hash(piece, sq);
+            }
+        }
+
+        // Hash side to move
+        if self.side_to_move == Color::White {
+            hash ^= zobrist::side_to_move_hash();
+        }
+
+        // Hash hand pieces
+        for c in Color::iter() {
+            for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
+                let piece = Piece {
+                    piece_type: pt,
+                    color: c,
+                };
+                let count = self.hand.get(piece);
+                hash ^= zobrist::hand_hash(piece, count);
+            }
+        }
+
+        hash
     }
 
     /////////////////////////////////////////////////////////////////////////
@@ -354,6 +385,7 @@ impl Position {
             moved
         };
 
+        // Update board state
         self.set_piece(from, None);
         self.set_piece(to, Some(placed));
         self.occupied_bb ^= from;
@@ -363,17 +395,33 @@ impl Position {
         self.color_bb[moved.color.index()] ^= from;
         self.color_bb[placed.color.index()] ^= to;
 
+        // Update hash for moved piece
+        self.hash ^= zobrist::board_hash(moved, from);
+        self.hash ^= zobrist::board_hash(placed, to);
+
         if let Some(ref cap) = captured {
             self.occupied_bb ^= to;
             self.type_bb[cap.piece_type.index()] ^= to;
             self.color_bb[cap.color.index()] ^= to;
+
+            // Update hash for captured piece
+            self.hash ^= zobrist::board_hash(*cap, to);
+
             let pc = cap.flip();
             let pc = match pc.unpromote() {
                 Some(unpromoted) => unpromoted,
                 None => pc,
             };
+
+            // Update hash for hand (remove old count, add new count)
+            let old_count = self.hand.get(pc);
+            self.hash ^= zobrist::hand_hash(pc, old_count);
             self.hand.increment(pc);
+            self.hash ^= zobrist::hand_hash(pc, old_count + 1);
         }
+
+        // Update hash for side to move
+        self.hash ^= zobrist::side_to_move_hash();
 
         if self.in_check(stm) {
             // Undo-ing the move.
@@ -386,17 +434,33 @@ impl Position {
             self.color_bb[moved.color.index()] ^= from;
             self.color_bb[placed.color.index()] ^= to;
 
+            // Undo hash for moved piece
+            self.hash ^= zobrist::board_hash(moved, from);
+            self.hash ^= zobrist::board_hash(placed, to);
+
             if let Some(ref cap) = captured {
                 self.occupied_bb ^= to;
                 self.type_bb[cap.piece_type.index()] ^= to;
                 self.color_bb[cap.color.index()] ^= to;
+
+                // Undo hash for captured piece
+                self.hash ^= zobrist::board_hash(*cap, to);
+
                 let pc = cap.flip();
                 let pc = match pc.unpromote() {
                     Some(unpromoted) => unpromoted,
                     None => pc,
                 };
+
+                // Undo hash for hand
+                let new_count = self.hand.get(pc);
+                self.hash ^= zobrist::hand_hash(pc, new_count);
                 self.hand.decrement(pc);
+                self.hash ^= zobrist::hand_hash(pc, new_count - 1);
             }
+
+            // Undo hash for side to move
+            self.hash ^= zobrist::side_to_move_hash();
 
             return Err(MoveError::InCheck);
         }
@@ -491,10 +555,22 @@ impl Position {
             }
         }
 
+        // Update board state
         self.set_piece(to, Some(pc));
         self.occupied_bb ^= to;
         self.type_bb[pc.piece_type.index()] ^= to;
         self.color_bb[pc.color.index()] ^= to;
+
+        // Update hash for dropped piece
+        self.hash ^= zobrist::board_hash(pc, to);
+
+        // Update hash for hand (remove old count, add new count)
+        let old_count = self.hand.get(pc);
+        self.hash ^= zobrist::hand_hash(pc, old_count);
+        self.hash ^= zobrist::hand_hash(pc, old_count - 1);
+
+        // Update hash for side to move
+        self.hash ^= zobrist::side_to_move_hash();
 
         if self.in_check(stm) {
             // Undo-ing the move.
@@ -502,6 +578,17 @@ impl Position {
             self.occupied_bb ^= to;
             self.type_bb[pc.piece_type.index()] ^= to;
             self.color_bb[pc.color.index()] ^= to;
+
+            // Undo hash for dropped piece
+            self.hash ^= zobrist::board_hash(pc, to);
+
+            // Undo hash for hand
+            self.hash ^= zobrist::hand_hash(pc, old_count - 1);
+            self.hash ^= zobrist::hand_hash(pc, old_count);
+
+            // Undo hash for side to move
+            self.hash ^= zobrist::side_to_move_hash();
+
             return Err(MoveError::InCheck);
         }
 
@@ -630,7 +717,15 @@ impl Position {
 
         self.side_to_move = self.side_to_move.flip();
         self.ply -= 1;
-        self.sfen_history.pop();
+        self.hash_history.pop();
+
+        // Restore hash from history
+        if let Some((prev_hash, _)) = self.hash_history.last() {
+            self.hash = *prev_hash;
+        } else {
+            // Recompute hash if history is empty
+            self.hash = self.compute_hash();
+        }
 
         Ok(())
     }
@@ -727,19 +822,19 @@ impl Position {
     }
 
     fn detect_repetition(&self) -> Result<(), MoveError> {
-        if self.sfen_history.len() < 9 {
+        if self.hash_history.len() < 9 {
             return Ok(());
         }
 
-        let cur = self.sfen_history.last().unwrap();
+        let cur = self.hash_history.last().unwrap();
 
         let mut cnt = 0;
-        for (i, entry) in self.sfen_history.iter().rev().enumerate() {
+        for (i, entry) in self.hash_history.iter().rev().enumerate() {
             if entry.0 == cur.0 {
                 cnt += 1;
 
                 if cnt == 4 {
-                    let prev = self.sfen_history.get(self.sfen_history.len() - 2).unwrap();
+                    let prev = self.hash_history.get(self.hash_history.len() - 2).unwrap();
 
                     if cur.1 * 2 >= (i as u16) {
                         return Err(MoveError::PerpetualCheckLose);
@@ -781,7 +876,9 @@ impl Position {
             .ok_or(SfenError::MissingDataFields)
             .and_then(|s| self.parse_sfen_ply(s))?;
 
-        self.sfen_history.clear();
+        self.hash = self.compute_hash();
+        self.hash_history.clear();
+        self.initial_sfen = Some(self.generate_sfen());
         self.log_position();
 
         // Make moves following the initial position, optional.
@@ -790,9 +887,7 @@ impl Position {
                 if let Some(m) = Move::from_sfen(m) {
                     // Stop if any error occurrs.
                     match self.make_move(m) {
-                        Ok(_) => {
-                            self.log_position();
-                        }
+                        Ok(_) => {}
                         Err(_) => break,
                     }
                 } else {
@@ -806,25 +901,20 @@ impl Position {
 
     /// Converts the current state into SFEN formatted string.
     pub fn to_sfen(&self) -> String {
-        if self.sfen_history.is_empty() {
-            return self.generate_sfen();
+        match &self.initial_sfen {
+            None => self.generate_sfen(),
+            Some(initial) => {
+                if self.move_history.is_empty() {
+                    initial.clone()
+                } else {
+                    let mut sfen = format!("{} moves", initial);
+                    for m in self.move_history.iter() {
+                        let _ = write!(sfen, " {}", &m.to_sfen());
+                    }
+                    sfen
+                }
+            }
         }
-
-        if self.move_history.is_empty() {
-            return format!("{} {}", self.sfen_history.first().unwrap().0, self.ply);
-        }
-
-        let mut sfen = format!(
-            "{} {} moves",
-            &self.sfen_history.first().unwrap().0,
-            self.ply - self.move_history.len() as u16
-        );
-
-        for m in self.move_history.iter() {
-            let _ = write!(sfen, " {}", &m.to_sfen());
-        }
-
-        sfen
     }
 
     fn parse_sfen_board(&mut self, s: &str) -> Result<(), SfenError> {
@@ -1013,7 +1103,9 @@ impl Default for Position {
             hand: Default::default(),
             ply: 1,
             move_history: Default::default(),
-            sfen_history: Default::default(),
+            hash_history: Default::default(),
+            hash: 0,
+            initial_sfen: None,
             occupied_bb: Default::default(),
             color_bb: Default::default(),
             type_bb: Default::default(),

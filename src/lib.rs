@@ -40,6 +40,7 @@ pub mod piece_type;
 pub mod position;
 pub mod square;
 pub mod time;
+pub mod zobrist;
 
 pub use self::bitboard::Bitboard;
 pub use self::color::Color;
