@@ -1,11 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use shogi::bitboard::Factory;
-use shogi::zobrist::init as zobrist_init;
 use shogi::Position;
 
 fn bench_perft(c: &mut Criterion) {
     Factory::init();
-    zobrist_init();
 
     let mut pos = Position::new();
     pos.set_sfen("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1")
