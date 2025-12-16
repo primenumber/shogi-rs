@@ -1,3 +1,7 @@
+use rand::Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+
 use crate::{Piece, PieceType, Square};
 
 /// Zobrist hash value type.
@@ -25,48 +29,32 @@ static mut SIDE_TO_MOVE_HASH: u64 = 0;
 static mut HAND_HASH: [[[u64; MAX_HAND_COUNT]; NUM_COLORS]; NUM_HAND_PIECE_TYPES] =
     [[[0; MAX_HAND_COUNT]; NUM_COLORS]; NUM_HAND_PIECE_TYPES];
 
-/// Simple xorshift64 PRNG for generating random numbers.
-struct Xorshift64 {
-    state: u64,
-}
-
-impl Xorshift64 {
-    fn new(seed: u64) -> Self {
-        Xorshift64 { state: seed }
-    }
-
-    fn next(&mut self) -> u64 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.state = x;
-        x
-    }
-}
+/// Fixed seed for reproducible Zobrist hash values.
+const ZOBRIST_SEED: u64 = 0x5408_12DB_8157_5EED;
 
 /// Initializes the Zobrist hash tables. Must be called before using Zobrist hashing.
+/// Uses ChaCha8 CSPRNG with a fixed seed for high-quality, reproducible random values.
 pub fn init() {
-    let mut rng = Xorshift64::new(0x123456789ABCDEF0);
+    let mut rng = ChaCha8Rng::seed_from_u64(ZOBRIST_SEED);
 
     unsafe {
         // Initialize board hash
         for pt in 0..NUM_PIECE_TYPES {
             for c in 0..NUM_COLORS {
                 for sq in 0..NUM_SQUARES {
-                    BOARD_HASH[pt][c][sq] = rng.next();
+                    BOARD_HASH[pt][c][sq] = rng.gen();
                 }
             }
         }
 
         // Initialize side to move hash
-        SIDE_TO_MOVE_HASH = rng.next();
+        SIDE_TO_MOVE_HASH = rng.gen();
 
         // Initialize hand hash
         for pt in 0..NUM_HAND_PIECE_TYPES {
             for c in 0..NUM_COLORS {
                 for count in 0..MAX_HAND_COUNT {
-                    HAND_HASH[pt][c][count] = rng.next();
+                    HAND_HASH[pt][c][count] = rng.gen();
                 }
             }
         }
