@@ -142,6 +142,11 @@ impl Position {
         &self.state
     }
 
+    /// Returns the current Zobrist hash value.
+    pub fn current_hash(&self) -> u64 {
+        self.current_hash
+    }
+
     /// Checks if a player with the given color can declare winning.
     ///
     /// See [the section 25 in 世界コンピュータ将棋選手権 大会ルール][csa] for more detail.
