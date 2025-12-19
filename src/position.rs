@@ -245,6 +245,37 @@ impl Position {
         }
     }
 
+    fn in_check_after_move(&self, m: Option<Move>) -> bool {
+        let stm = self.side_to_move();
+        let Some(king_sq) = self.find_king(stm) else {
+            return false;
+        };
+        let Some(m) = m else {
+            return self.is_attacked_by(king_sq, stm.flip());
+        };
+        match m {
+            Move::Normal { to, .. } => {
+                let piece = self.piece_at(to).unwrap();
+                [
+                    PieceType::Lance,
+                    PieceType::Rook,
+                    PieceType::Bishop,
+                    PieceType::ProRook,
+                    PieceType::ProBishop,
+                    piece.piece_type,
+                ]
+                .iter()
+                .any(|&attack_pt| {
+                    self.get_attackers_of_type(attack_pt, king_sq, stm.flip())
+                        .is_any()
+                })
+            }
+            Move::Drop { piece_type, .. } => self
+                .get_attackers_of_type(piece_type, king_sq, stm.flip())
+                .is_any(),
+        }
+    }
+
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
         let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
@@ -279,8 +310,8 @@ impl Position {
         &bb & &self.move_candidates(sq, attack_pc.flip())
     }
 
-    fn log_position(&mut self) {
-        let in_check = self.in_check(self.side_to_move());
+    fn log_position(&mut self, m: Option<Move>) {
+        let in_check = self.in_check_after_move(m);
 
         let continuous_check = if in_check {
             let past = if self.hash_history.len() >= 2 {
@@ -468,7 +499,11 @@ impl Position {
         self.side_to_move = opponent;
         self.ply += 1;
 
-        self.log_position();
+        self.log_position(Some(Move::Normal {
+            from,
+            to,
+            promote: promoted,
+        }));
         self.detect_repetition()?;
 
         Ok(MoveRecord::Normal {
@@ -596,7 +631,7 @@ impl Position {
         self.side_to_move = opponent;
         self.ply += 1;
 
-        self.log_position();
+        self.log_position(Some(Move::Drop { to, piece_type: pt }));
         self.detect_repetition()?;
 
         Ok(MoveRecord::Drop { to, piece: pc })
@@ -879,7 +914,7 @@ impl Position {
         self.hash = self.compute_hash();
         self.hash_history.clear();
         self.initial_sfen = Some(self.generate_sfen());
-        self.log_position();
+        self.log_position(None);
 
         // Make moves following the initial position, optional.
         if let Some("moves") = parts.next() {
