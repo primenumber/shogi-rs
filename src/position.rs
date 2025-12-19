@@ -8,7 +8,7 @@ use crate::{Bitboard, Color, Move, MoveError, Piece, PieceType, SfenError, Squar
 mod test;
 
 /// MoveRecord stores information necessary to undo the move.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MoveRecord {
     Normal {
         from: Square,
@@ -161,6 +161,10 @@ impl Position {
         self.state.in_check(c)
     }
 
+    fn in_check_after_move(&self, move_record: Option<MoveRecord>) -> bool {
+        self.state.in_check_after_move(move_record)
+    }
+
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
         self.state.find_king(c)
@@ -201,8 +205,8 @@ impl Position {
         hash
     }
 
-    fn log_position(&mut self) {
-        let in_check = self.in_check(self.side_to_move());
+    fn log_position(&mut self, move_record: Option<MoveRecord>) {
+        let in_check = self.in_check_after_move(move_record);
 
         let continuous_check = if in_check {
             let past = if self.position_history.len() >= 2 {
@@ -276,7 +280,7 @@ impl Position {
         // Toggle side to move
         self.current_hash ^= self.zobrist.toggle_side();
 
-        self.log_position();
+        self.log_position(Some(record.clone()));
         self.detect_repetition()?;
         Ok(record)
     }
@@ -311,7 +315,7 @@ impl Position {
         // Toggle side to move
         self.current_hash ^= self.zobrist.toggle_side();
 
-        self.log_position();
+        self.log_position(Some(record.clone()));
         self.detect_repetition()?;
         Ok(record)
     }
@@ -400,7 +404,7 @@ impl Position {
 
         self.position_history.clear();
         self.move_history.clear();
-        self.log_position();
+        self.log_position(None);
 
         // Make moves following the initial position, optional.
         if parts.peek() == Some(&"moves") {

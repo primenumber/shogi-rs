@@ -87,6 +87,42 @@ impl StateInfo {
         }
     }
 
+    pub fn in_check_after_move(&self, move_record: Option<MoveRecord>) -> bool {
+        let Some(king_sq) = self.find_king(self.side_to_move) else {
+            return false;
+        };
+        let stm = self.side_to_move;
+        let Some(record) = move_record else {
+            return self.in_check(self.side_to_move);
+        };
+        let piece_type = match record {
+            MoveRecord::Normal { placed, .. } => placed.piece_type,
+            MoveRecord::Drop { piece, .. } => piece.piece_type,
+        };
+        let another_color = stm.flip();
+        if self.get_attackers_of_type(piece_type, king_sq, another_color).is_any() {
+            return true;
+        }
+        let MoveRecord::Normal { .. } = record else {
+            return false;
+        };
+        let rook_effects = BBFactory::rook_attack(king_sq, &self.occupied_bb);
+        let rook_bb = (self.type_bb[PieceType::Rook.index()] | self.type_bb[PieceType::ProRook.index()])
+            & self.color_bb[another_color.index()];
+        if (rook_effects & rook_bb).is_any() {
+            return true;
+        }
+        let bishop_effects = BBFactory::bishop_attack(king_sq, &self.occupied_bb);
+        let bishop_bb = (self.type_bb[PieceType::Bishop.index()] | self.type_bb[PieceType::ProBishop.index()])
+            & self.color_bb[another_color.index()];
+        if (bishop_effects & bishop_bb).is_any() {
+            return true;
+        }
+        let lance_effects = BBFactory::lance_attack(another_color, king_sq, &self.occupied_bb);
+        let lance_bb = self.type_bb[PieceType::Lance.index()] & self.color_bb[another_color.index()];
+        (lance_effects & lance_bb).is_any()
+    }
+
     /// Returns true if the given square is attacked by the given color.
     pub(crate) fn is_attacked_by(&self, sq: Square, c: Color) -> bool {
         PieceType::iter()
