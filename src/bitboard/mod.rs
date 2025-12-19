@@ -203,7 +203,7 @@ impl Bitboard {
 // Operator implementations
 /////////////////////////////////////////////////////////////////////////////
 
-impl<'a> ops::Not for Bitboard {
+impl ops::Not for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
@@ -214,7 +214,7 @@ impl<'a> ops::Not for Bitboard {
     }
 }
 
-impl<'a, 'b> ops::BitAnd<Bitboard> for Bitboard {
+impl ops::BitAnd<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
@@ -225,7 +225,7 @@ impl<'a, 'b> ops::BitAnd<Bitboard> for Bitboard {
     }
 }
 
-impl<'a> ops::BitAndAssign<Bitboard> for Bitboard {
+impl ops::BitAndAssign<Bitboard> for Bitboard {
     #[inline(always)]
     fn bitand_assign(&mut self, rhs: Bitboard) {
         self.p[0] &= rhs.p[0];
@@ -233,7 +233,7 @@ impl<'a> ops::BitAndAssign<Bitboard> for Bitboard {
     }
 }
 
-impl<'a, 'b> ops::BitOr<Bitboard> for Bitboard {
+impl ops::BitOr<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
@@ -244,7 +244,7 @@ impl<'a, 'b> ops::BitOr<Bitboard> for Bitboard {
     }
 }
 
-impl<'a> ops::BitOrAssign<Bitboard> for Bitboard {
+impl ops::BitOrAssign<Bitboard> for Bitboard {
     #[inline(always)]
     fn bitor_assign(&mut self, rhs: Bitboard) {
         self.p[0] |= rhs.p[0];
@@ -252,7 +252,7 @@ impl<'a> ops::BitOrAssign<Bitboard> for Bitboard {
     }
 }
 
-impl<'a, 'b> ops::BitXor<Bitboard> for Bitboard {
+impl ops::BitXor<Bitboard> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
@@ -263,7 +263,7 @@ impl<'a, 'b> ops::BitXor<Bitboard> for Bitboard {
     }
 }
 
-impl<'a> ops::BitXorAssign<Bitboard> for Bitboard {
+impl ops::BitXorAssign<Bitboard> for Bitboard {
     #[inline(always)]
     fn bitxor_assign(&mut self, rhs: Bitboard) {
         self.p[0] ^= rhs.p[0];
@@ -303,7 +303,7 @@ impl ops::BitOrAssign<Square> for Bitboard {
     }
 }
 
-impl<'a> ops::BitXor<Square> for Bitboard {
+impl ops::BitXor<Square> for Bitboard {
     type Output = Bitboard;
 
     #[inline(always)]
