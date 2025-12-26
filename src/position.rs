@@ -298,18 +298,7 @@ impl Position {
     }
 
     fn get_attackers_of_type(&self, pt: PieceType, sq: Square, c: Color) -> Bitboard {
-        let bb = &self.type_bb[pt.index()] & &self.color_bb[c.index()];
-
-        if bb.is_empty() {
-            return bb;
-        }
-
-        let attack_pc = Piece {
-            piece_type: pt,
-            color: c,
-        };
-
-        &bb & &self.move_candidates(sq, attack_pc.flip())
+        self.get_attackers_of_type_with_occupied(pt, sq, c, &self.occupied_bb)
     }
 
     fn log_position(&mut self, m: Option<Move>) {
@@ -769,26 +758,7 @@ impl Position {
 
     /// Returns a list of squares to where the given piece at the given square can move.
     pub fn move_candidates(&self, sq: Square, p: Piece) -> Bitboard {
-        let bb = match p.piece_type {
-            PieceType::Rook => BBFactory::rook_attack(sq, &self.occupied_bb),
-            PieceType::Bishop => BBFactory::bishop_attack(sq, &self.occupied_bb),
-            PieceType::Lance => BBFactory::lance_attack(p.color, sq, &self.occupied_bb),
-            PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, &self.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
-            }
-            PieceType::ProBishop => {
-                &BBFactory::bishop_attack(sq, &self.occupied_bb)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
-            }
-            PieceType::ProSilver
-            | PieceType::ProKnight
-            | PieceType::ProLance
-            | PieceType::ProPawn => BBFactory::attacks_from(PieceType::Gold, p.color, sq),
-            pt => BBFactory::attacks_from(pt, p.color, sq),
-        };
-
-        &bb & &!&self.color_bb[p.color.index()]
+        self.move_candidates_with_occupied(sq, p, &self.occupied_bb)
     }
 
     fn all_normal_move_candidates(&self, from: Square, p: Piece) -> Vec<Move> {
