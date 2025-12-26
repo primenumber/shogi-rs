@@ -23,9 +23,23 @@ fn test_perft(pos: &Position, depth: usize, expected_count: usize) {
     assert_eq!(expected_count, cnt);
 }
 
+fn perft_leaf(pos: &mut Position) -> usize {
+    let mut cnt = 0;
+
+    for m in pos.all_move_candidates(pos.side_to_move()) {
+        if pos.is_legal(m) {
+            cnt += 1;
+        }
+    }
+
+    cnt
+}
+
 fn perft(pos: &mut Position, depth: usize) -> usize {
     if depth == 0 {
         return 1;
+    } else if depth == 1 {
+        return perft_leaf(pos);
     }
     let mut cnt = 0;
 

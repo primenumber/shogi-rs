@@ -856,6 +856,277 @@ impl Position {
         moves
     }
 
+    /// Checks if the given move is legal without modifying the board.
+    ///
+    /// This function validates the move and checks that it doesn't leave the king in check.
+    /// Unlike `make_move`, this function does not update the board state.
+    pub fn is_legal(&self, m: Move) -> bool {
+        match m {
+            Move::Normal { from, to, promote } => self.is_legal_normal_move(from, to, promote),
+            Move::Drop { to, piece_type } => self.is_legal_drop_move(to, piece_type),
+        }
+    }
+
+    fn is_legal_normal_move(&self, from: Square, to: Square, promote: bool) -> bool {
+        let stm = self.side_to_move();
+
+        // Check if there is a piece at `from`
+        let Some(moved) = *self.piece_at(from) else {
+            return false;
+        };
+
+        // Check if the piece belongs to the side to move
+        if moved.color != stm {
+            return false;
+        }
+
+        // Check promotion conditions
+        if promote && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
+            return false;
+        }
+
+        // Check if the piece can move to `to`
+        if !self.move_candidates(from, moved).any(|sq| sq == to) {
+            return false;
+        }
+
+        // Check if the piece can be placed at `to` without promotion
+        if !promote && !moved.is_placeable_at(to) {
+            return false;
+        }
+
+        // Check if the piece type can promote
+        if promote && moved.promote().is_none() {
+            return false;
+        }
+
+        // Check if the move leaves the king in check
+        !self.leaves_king_in_check_normal(from, to, moved)
+    }
+
+    fn is_legal_drop_move(&self, to: Square, pt: PieceType) -> bool {
+        let stm = self.side_to_move();
+        let opponent = stm.flip();
+
+        // Check if `to` is empty
+        if self.piece_at(to).is_some() {
+            return false;
+        }
+
+        let pc = Piece {
+            piece_type: pt,
+            color: stm,
+        };
+
+        // Check if the piece is in hand
+        if self.hand(pc) == 0 {
+            return false;
+        }
+
+        // Check if the piece can be placed at `to`
+        if !pc.is_placeable_at(to) {
+            return false;
+        }
+
+        // Pawn-specific rules
+        if pt == PieceType::Pawn {
+            // Nifu check
+            for i in 0..9 {
+                if let Some(fp) = *self.piece_at(Square::new(to.file(), i).unwrap()) {
+                    if fp == pc {
+                        return false;
+                    }
+                }
+            }
+
+            // Uchifuzume check
+            if let Some(king_sq) = to.shift(0, if stm == Color::Black { -1 } else { 1 }) {
+                if let Some(
+                    king_pc @ Piece {
+                        piece_type: PieceType::King,
+                        ..
+                    },
+                ) = *self.piece_at(king_sq)
+                {
+                    if king_pc.color == opponent {
+                        // Check if any opponent's piece can capture the dropped pawn
+                        let pinned = self.pinned_bb(opponent);
+
+                        let not_attacked = PieceType::iter()
+                            .filter(|&pt| pt != PieceType::King)
+                            .flat_map(|pt| self.get_attackers_of_type(pt, to, opponent))
+                            .all(|sq| (&pinned & sq).is_any());
+
+                        if not_attacked {
+                            // Temporarily add the pawn to check if king can escape
+                            let virtual_occupied = &self.occupied_bb | to;
+
+                            let is_attacked = |sq: Square| {
+                                if let Some(pc) = *self.piece_at(sq) {
+                                    if pc.color == opponent {
+                                        return true;
+                                    }
+                                }
+                                self.is_attacked_by_with_occupied(sq, stm, &virtual_occupied)
+                            };
+
+                            let uchifuzume =
+                                self.move_candidates(king_sq, king_pc).all(is_attacked);
+
+                            if uchifuzume {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if the move leaves the king in check
+        !self.leaves_king_in_check_drop(to)
+    }
+
+    /// Checks if the king is attacked by a specific color with a custom occupied bitboard.
+    fn is_attacked_by_with_occupied(&self, sq: Square, c: Color, occupied: &Bitboard) -> bool {
+        PieceType::iter().any(|pt| {
+            self.get_attackers_of_type_with_occupied(pt, sq, c, occupied)
+                .is_any()
+        })
+    }
+
+    /// Gets attackers of a specific type with a custom occupied bitboard.
+    fn get_attackers_of_type_with_occupied(
+        &self,
+        pt: PieceType,
+        sq: Square,
+        c: Color,
+        occupied: &Bitboard,
+    ) -> Bitboard {
+        let bb = &self.type_bb[pt.index()] & &self.color_bb[c.index()];
+
+        if bb.is_empty() {
+            return bb;
+        }
+
+        let attack_pc = Piece {
+            piece_type: pt,
+            color: c,
+        };
+
+        &bb & &self.move_candidates_with_occupied(sq, attack_pc.flip(), occupied)
+    }
+
+    /// Returns move candidates with a custom occupied bitboard.
+    fn move_candidates_with_occupied(
+        &self,
+        sq: Square,
+        p: Piece,
+        occupied: &Bitboard,
+    ) -> Bitboard {
+        let bb = match p.piece_type {
+            PieceType::Rook => BBFactory::rook_attack(sq, occupied),
+            PieceType::Bishop => BBFactory::bishop_attack(sq, occupied),
+            PieceType::Lance => BBFactory::lance_attack(p.color, sq, occupied),
+            PieceType::ProRook => {
+                &BBFactory::rook_attack(sq, occupied)
+                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+            }
+            PieceType::ProBishop => {
+                &BBFactory::bishop_attack(sq, occupied)
+                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+            }
+            PieceType::ProSilver
+            | PieceType::ProKnight
+            | PieceType::ProLance
+            | PieceType::ProPawn => BBFactory::attacks_from(PieceType::Gold, p.color, sq),
+            pt => BBFactory::attacks_from(pt, p.color, sq),
+        };
+
+        &bb & &!&self.color_bb[p.color.index()]
+    }
+
+    /// Checks if a normal move leaves the king in check.
+    fn leaves_king_in_check_normal(&self, from: Square, to: Square, moved: Piece) -> bool {
+        let stm = self.side_to_move();
+        let opponent = stm.flip();
+
+        // Determine king's position after the move
+        let king_sq = if moved.piece_type == PieceType::King {
+            to
+        } else {
+            match self.find_king(stm) {
+                Some(sq) => sq,
+                None => return false,
+            }
+        };
+
+        // Build virtual occupied bitboard
+        // After the move: `from` is empty, `to` is occupied by the moved piece
+        // If there was a piece at `to`, it is captured and removed
+        // So virtual_occupied should be: (occupied - from) | to
+        let mut virtual_occupied = &self.occupied_bb ^ from; // Remove `from`
+        virtual_occupied |= to; // Add `to`
+
+        // Check if opponent can attack king_sq with the virtual occupied board
+        self.is_king_attacked_with_virtual_board(king_sq, opponent, &virtual_occupied, Some(to))
+    }
+
+    /// Checks if a drop move leaves the king in check.
+    fn leaves_king_in_check_drop(&self, to: Square) -> bool {
+        let stm = self.side_to_move();
+        let opponent = stm.flip();
+
+        let king_sq = match self.find_king(stm) {
+            Some(sq) => sq,
+            None => return false,
+        };
+
+        // Virtual occupied: current occupied + to
+        let virtual_occupied = &self.occupied_bb | to;
+
+        // Check if opponent can attack king_sq with the virtual occupied board
+        self.is_king_attacked_with_virtual_board(king_sq, opponent, &virtual_occupied, None)
+    }
+
+    /// Checks if the king at king_sq is attacked by color c with the given occupied board.
+    /// captured_sq is a square where the opponent's piece has been captured (if any).
+    fn is_king_attacked_with_virtual_board(
+        &self,
+        king_sq: Square,
+        attacker: Color,
+        virtual_occupied: &Bitboard,
+        captured_sq: Option<Square>,
+    ) -> bool {
+        for pt in PieceType::iter() {
+            let mut attackers = &self.type_bb[pt.index()] & &self.color_bb[attacker.index()];
+
+            // Exclude captured piece if any
+            if let Some(cap_sq) = captured_sq {
+                let cap_sq_bb = &Bitboard::empty() | cap_sq;
+                attackers = &attackers & &!&cap_sq_bb;
+            }
+
+            if attackers.is_empty() {
+                continue;
+            }
+
+            // Compute attack pattern from king_sq for the opposite piece
+            // (reverse attack to find attackers)
+            let attack_pc = Piece {
+                piece_type: pt,
+                color: attacker,
+            };
+            let attack_bb =
+                self.move_candidates_with_occupied(king_sq, attack_pc.flip(), virtual_occupied);
+
+            if (&attackers & &attack_bb).is_any() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn detect_repetition(&self) -> Result<(), MoveError> {
         if self.hash_history.len() < 9 {
             return Ok(());
@@ -1992,5 +2263,266 @@ mod tests {
 
         assert_eq!(Color::White, pos.side_to_move());
         assert_eq!(1024, pos.ply());
+    }
+
+    #[test]
+    fn is_legal_basic_normal_moves() {
+        setup();
+
+        let mut pos = Position::new();
+        pos.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
+            .expect("failed to parse SFEN string");
+
+        // Legal pawn moves
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_7G,
+            to: SQ_7F,
+            promote: false,
+        }));
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_2G,
+            to: SQ_2F,
+            promote: false,
+        }));
+
+        // Illegal: moving opponent's piece
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_7C,
+            to: SQ_7D,
+            promote: false,
+        }));
+
+        // Illegal: moving to occupied square (own piece)
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_8H,
+            to: SQ_7G,
+            promote: false,
+        }));
+
+        // Illegal: moving to out-of-reach square
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_7G,
+            to: SQ_7D,
+            promote: false,
+        }));
+    }
+
+    #[test]
+    fn is_legal_leaves_king_in_check() {
+        setup();
+
+        let mut pos = Position::new();
+
+        // King is in check from rook - moving other piece that doesn't block is illegal
+        pos.set_sfen("9/3r5/9/9/6B2/9/9/9/3K5 b P 1")
+            .expect("failed to parse SFEN string");
+
+        // Moving bishop doesn't help - still in check
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_3E,
+            to: SQ_4D,
+            promote: false,
+        }));
+
+        // Moving king out of check is legal
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_6I,
+            to: SQ_7I,
+            promote: false,
+        }));
+
+        // Moving king into check is illegal
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_6I,
+            to: SQ_6H,
+            promote: false,
+        }));
+    }
+
+    #[test]
+    fn is_legal_promotion() {
+        setup();
+
+        let mut pos = Position::new();
+        pos.set_sfen("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w GR5pnsg 1")
+            .expect("failed to parse SFEN string");
+
+        // Legal: piece in promotion zone can promote
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_6F,
+            to: SQ_7G,
+            promote: true,
+        }));
+
+        // Legal: piece can also not promote (if it can move without promotion)
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_6F,
+            to: SQ_7G,
+            promote: false,
+        }));
+
+        // Test Black's promotion - piece outside promotion zone cannot promote
+        pos.set_sfen("lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1")
+            .expect("failed to parse SFEN string");
+
+        // Illegal: pawn at 7g cannot promote when moving to 7f (both outside promotion zone)
+        assert!(!pos.is_legal(Move::Normal {
+            from: SQ_7G,
+            to: SQ_7F,
+            promote: true,
+        }));
+
+        // Legal: pawn can move without promoting
+        assert!(pos.is_legal(Move::Normal {
+            from: SQ_7G,
+            to: SQ_7F,
+            promote: false,
+        }));
+    }
+
+    #[test]
+    fn is_legal_drop_moves() {
+        setup();
+
+        let mut pos = Position::new();
+        pos.set_sfen("l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w GR5pnsg 1")
+            .expect("failed to parse SFEN string");
+
+        // Legal drop
+        assert!(pos.is_legal(Move::Drop {
+            to: SQ_5E,
+            piece_type: PieceType::Pawn,
+        }));
+
+        // Illegal: drop on occupied square
+        assert!(!pos.is_legal(Move::Drop {
+            to: SQ_6F,
+            piece_type: PieceType::Pawn,
+        }));
+
+        // Illegal: drop piece not in hand (White doesn't have Rook)
+        assert!(!pos.is_legal(Move::Drop {
+            to: SQ_5E,
+            piece_type: PieceType::Rook,
+        }));
+
+        // Illegal: pawn on last rank
+        assert!(!pos.is_legal(Move::Drop {
+            to: SQ_9I,
+            piece_type: PieceType::Pawn,
+        }));
+    }
+
+    #[test]
+    fn is_legal_nifu() {
+        setup();
+
+        let mut pos = Position::new();
+        pos.set_sfen(
+            "ln1g5/1ks1g3l/1p2p1n2/p1pGs2rp/1P1N1ppp1/P1SB1P2P/1S1p1bPP1/LKG6/4R2NL w 2Pp 91",
+        )
+        .expect("failed to parse SFEN string");
+
+        // Illegal: nifu (dropping pawn on file with existing pawn)
+        assert!(!pos.is_legal(Move::Drop {
+            to: SQ_6C,
+            piece_type: PieceType::Pawn,
+        }));
+
+        // OK if existing pawn is promoted
+        pos.set_sfen(
+            "ln1g5/1ks1g3l/1p2p1n2/p1pGs2rp/1P1N1ppp1/P1SB1P2P/1S1+p1bPP1/LKG6/4R2NL w 2Pp 91",
+        )
+        .expect("failed to parse SFEN string");
+        assert!(pos.is_legal(Move::Drop {
+            to: SQ_6C,
+            piece_type: PieceType::Pawn,
+        }));
+    }
+
+    #[test]
+    fn is_legal_uchifuzume() {
+        setup();
+
+        let mut pos = Position::new();
+
+        // Uchifuzume cases (dropping pawn to checkmate is illegal)
+        let ng_cases = [
+            ("9/9/7sp/6ppk/9/7G1/9/9/9 b P 1", SQ_1E),
+            ("7nk/9/7S1/6b2/9/9/9/9/9 b P 1", SQ_1B),
+            ("7nk/7g1/6BS1/9/9/9/9/9/9 b P 1", SQ_1B),
+            ("R6gk/9/7S1/9/9/9/9/9/9 b P 1", SQ_1B),
+        ];
+
+        // Not uchifuzume (opponent can capture or king can escape)
+        let ok_cases = [
+            ("9/9/7pp/6psk/9/7G1/7N1/9/9 b P 1", SQ_1E),
+            ("7nk/9/7Sg/6b2/9/9/9/9/9 b P 1", SQ_1B),
+            ("7k1/5G2l/6B2/9/9/9/9/9/9 b NP 1", SQ_2B),
+        ];
+
+        for (i, case) in ng_cases.iter().enumerate() {
+            pos.set_sfen(case.0).expect("failed to parse SFEN string");
+            assert!(
+                !pos.is_legal(Move::Drop {
+                    to: case.1,
+                    piece_type: PieceType::Pawn,
+                }),
+                "uchifuzume ng case #{i} should be illegal"
+            );
+        }
+
+        for (i, case) in ok_cases.iter().enumerate() {
+            pos.set_sfen(case.0).expect("failed to parse SFEN string");
+            assert!(
+                pos.is_legal(Move::Drop {
+                    to: case.1,
+                    piece_type: PieceType::Pawn,
+                }),
+                "uchifuzume ok case #{i} should be legal"
+            );
+        }
+    }
+
+    #[test]
+    fn is_legal_matches_make_move() {
+        setup();
+
+        // Compare is_legal with make_move results for various positions
+        let test_positions = [
+            "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+            "l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w GR5pnsg 1",
+            "9/3r5/9/9/6B2/9/9/9/3K5 b P 1",
+        ];
+
+        for sfen in test_positions {
+            let mut pos = Position::new();
+            pos.set_sfen(sfen).expect("failed to parse SFEN string");
+
+            let stm = pos.side_to_move();
+            let candidates = pos.all_move_candidates(stm);
+
+            for m in candidates {
+                let is_legal_result = pos.is_legal(m);
+
+                // Clone position and try make_move
+                let mut test_pos = pos.clone();
+                let make_move_result = test_pos.make_move(m);
+
+                // is_legal should return true if make_move succeeds (excluding repetition errors)
+                let make_move_ok = match make_move_result {
+                    Ok(_) => true,
+                    Err(MoveError::Repetition)
+                    | Err(MoveError::PerpetualCheckWin)
+                    | Err(MoveError::PerpetualCheckLose) => true,
+                    Err(_) => false,
+                };
+
+                assert_eq!(
+                    is_legal_result, make_move_ok,
+                    "is_legal and make_move mismatch for move {m} in position {sfen}"
+                );
+            }
+        }
     }
 }
