@@ -164,6 +164,10 @@ impl Position {
         &self.move_history
     }
 
+    pub fn current_hash(&self) -> ZobristHash {
+        self.hash
+    }
+
     /// Checks if a player with the given color can declare winning.
     ///
     /// See [the section 25 in 世界コンピュータ将棋選手権 大会ルール][csa] for more detail.
