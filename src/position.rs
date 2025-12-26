@@ -1017,12 +1017,7 @@ impl Position {
     }
 
     /// Returns move candidates with a custom occupied bitboard.
-    fn move_candidates_with_occupied(
-        &self,
-        sq: Square,
-        p: Piece,
-        occupied: &Bitboard,
-    ) -> Bitboard {
+    fn move_candidates_with_occupied(&self, sq: Square, p: Piece, occupied: &Bitboard) -> Bitboard {
         let bb = match p.piece_type {
             PieceType::Rook => BBFactory::rook_attack(sq, occupied),
             PieceType::Bishop => BBFactory::bishop_attack(sq, occupied),
