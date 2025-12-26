@@ -739,9 +739,7 @@ impl Position {
 
         // Check if the piece type can promote
         if promote && moved.promote().is_none() {
-            return Err(MoveError::Inconsistent(
-                "This type of piece cannot promote",
-            ));
+            return Err(MoveError::Inconsistent("This type of piece cannot promote"));
         }
 
         // Check if the move leaves the king in check
