@@ -371,38 +371,17 @@ impl Position {
         to: Square,
         promoted: bool,
     ) -> Result<MoveRecord, MoveError> {
+        // Validate the move first
+        self.validate_normal_move(from, to, promoted)?;
+
         let stm = self.side_to_move();
         let opponent = stm.flip();
 
-        let moved = self
-            .piece_at(from)
-            .ok_or(MoveError::Inconsistent("No piece found"))?;
-
+        let moved = self.piece_at(from).unwrap();
         let captured = *self.piece_at(to);
 
-        if moved.color != stm {
-            return Err(MoveError::Inconsistent(
-                "The piece is not for the side to move",
-            ));
-        }
-
-        if promoted && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
-            return Err(MoveError::Inconsistent("The piece cannot promote"));
-        }
-
-        if !self.move_candidates(from, moved).any(|sq| sq == to) {
-            return Err(MoveError::Inconsistent("The piece cannot move to there"));
-        }
-
-        if !promoted && !moved.is_placeable_at(to) {
-            return Err(MoveError::NonMovablePiece);
-        }
-
         let placed = if promoted {
-            match moved.promote() {
-                Some(promoted) => promoted,
-                None => return Err(MoveError::Inconsistent("This type of piece cannot promote")),
-            }
+            moved.promote().unwrap()
         } else {
             moved
         };
@@ -445,48 +424,6 @@ impl Position {
         // Update hash for side to move
         self.hash ^= zobrist::side_to_move_hash();
 
-        if self.in_check(stm) {
-            // Undo-ing the move.
-            self.set_piece(from, Some(moved));
-            self.set_piece(to, captured);
-            self.occupied_bb ^= from;
-            self.occupied_bb ^= to;
-            self.type_bb[moved.piece_type.index()] ^= from;
-            self.type_bb[placed.piece_type.index()] ^= to;
-            self.color_bb[moved.color.index()] ^= from;
-            self.color_bb[placed.color.index()] ^= to;
-
-            // Undo hash for moved piece
-            self.hash ^= zobrist::board_hash(moved, from);
-            self.hash ^= zobrist::board_hash(placed, to);
-
-            if let Some(ref cap) = captured {
-                self.occupied_bb ^= to;
-                self.type_bb[cap.piece_type.index()] ^= to;
-                self.color_bb[cap.color.index()] ^= to;
-
-                // Undo hash for captured piece
-                self.hash ^= zobrist::board_hash(*cap, to);
-
-                let pc = cap.flip();
-                let pc = match pc.unpromote() {
-                    Some(unpromoted) => unpromoted,
-                    None => pc,
-                };
-
-                // Undo hash for hand
-                let new_count = self.hand.get(pc);
-                self.hash ^= zobrist::hand_hash(pc, new_count);
-                self.hand.decrement(pc);
-                self.hash ^= zobrist::hand_hash(pc, new_count - 1);
-            }
-
-            // Undo hash for side to move
-            self.hash ^= zobrist::side_to_move_hash();
-
-            return Err(MoveError::InCheck);
-        }
-
         self.side_to_move = opponent;
         self.ply += 1;
 
@@ -507,79 +444,16 @@ impl Position {
     }
 
     fn make_drop_move(&mut self, to: Square, pt: PieceType) -> Result<MoveRecord, MoveError> {
+        // Validate the move first
+        self.validate_drop_move(to, pt)?;
+
         let stm = self.side_to_move();
         let opponent = stm.flip();
-
-        if self.piece_at(to).is_some() {
-            return Err(MoveError::Inconsistent("There is already a piece in `to`"));
-        }
 
         let pc = Piece {
             piece_type: pt,
             color: stm,
         };
-
-        if self.hand(pc) == 0 {
-            return Err(MoveError::Inconsistent("The piece is not in the hand"));
-        }
-
-        if !pc.is_placeable_at(to) {
-            return Err(MoveError::NonMovablePiece);
-        }
-
-        if pc.piece_type == PieceType::Pawn {
-            // Nifu check.
-            for i in 0..9 {
-                if let Some(fp) = *self.piece_at(Square::new(to.file(), i).unwrap()) {
-                    if fp == pc {
-                        return Err(MoveError::Nifu);
-                    }
-                }
-            }
-
-            // Uchifuzume check.
-            if let Some(king_sq) = to.shift(0, if stm == Color::Black { -1 } else { 1 }) {
-                // Is the dropped pawn attacking the opponent's king?
-                if let Some(
-                    pc @ Piece {
-                        piece_type: PieceType::King,
-                        ..
-                    },
-                ) = *self.piece_at(king_sq)
-                {
-                    if pc.color == opponent {
-                        // can any opponent's piece attack the dropped pawn?
-                        let pinned = self.pinned_bb(opponent);
-
-                        let not_attacked = PieceType::iter()
-                            .filter(|&pt| pt != PieceType::King)
-                            .flat_map(|pt| self.get_attackers_of_type(pt, to, opponent))
-                            .all(|sq| (&pinned & sq).is_any());
-
-                        if not_attacked {
-                            // the dropped pawn may block bishop's moves
-                            self.occupied_bb ^= to;
-                            // can the opponent's king evade?
-                            let is_attacked = |sq| {
-                                if let Some(pc) = *self.piece_at(sq) {
-                                    if pc.color == opponent {
-                                        return true;
-                                    }
-                                }
-
-                                self.is_attacked_by(sq, stm)
-                            };
-                            let uchifuzume = self.move_candidates(king_sq, pc).all(is_attacked);
-                            self.occupied_bb ^= to;
-
-                            if uchifuzume {
-                                return Err(MoveError::Uchifuzume);
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // Update board state
         self.set_piece(to, Some(pc));
@@ -593,32 +467,12 @@ impl Position {
         // Update hash for hand (remove old count, add new count)
         let old_count = self.hand.get(pc);
         self.hash ^= zobrist::hand_hash(pc, old_count);
+        self.hand.decrement(pc);
         self.hash ^= zobrist::hand_hash(pc, old_count - 1);
 
         // Update hash for side to move
         self.hash ^= zobrist::side_to_move_hash();
 
-        if self.in_check(stm) {
-            // Undo-ing the move.
-            self.set_piece(to, None);
-            self.occupied_bb ^= to;
-            self.type_bb[pc.piece_type.index()] ^= to;
-            self.color_bb[pc.color.index()] ^= to;
-
-            // Undo hash for dropped piece
-            self.hash ^= zobrist::board_hash(pc, to);
-
-            // Undo hash for hand
-            self.hash ^= zobrist::hand_hash(pc, old_count - 1);
-            self.hash ^= zobrist::hand_hash(pc, old_count);
-
-            // Undo hash for side to move
-            self.hash ^= zobrist::side_to_move_hash();
-
-            return Err(MoveError::InCheck);
-        }
-
-        self.hand.decrement(pc);
         self.side_to_move = opponent;
         self.ply += 1;
 
@@ -833,56 +687,74 @@ impl Position {
     /// This function validates the move and checks that it doesn't leave the king in check.
     /// Unlike `make_move`, this function does not update the board state.
     pub fn is_legal(&self, m: Move) -> bool {
+        self.validate_move(m).is_ok()
+    }
+
+    /// Validates the given move and returns an error if it is illegal.
+    fn validate_move(&self, m: Move) -> Result<(), MoveError> {
         match m {
-            Move::Normal { from, to, promote } => self.is_legal_normal_move(from, to, promote),
-            Move::Drop { to, piece_type } => self.is_legal_drop_move(to, piece_type),
+            Move::Normal { from, to, promote } => self.validate_normal_move(from, to, promote),
+            Move::Drop { to, piece_type } => self.validate_drop_move(to, piece_type),
         }
     }
 
-    fn is_legal_normal_move(&self, from: Square, to: Square, promote: bool) -> bool {
+    fn validate_normal_move(
+        &self,
+        from: Square,
+        to: Square,
+        promote: bool,
+    ) -> Result<(), MoveError> {
         let stm = self.side_to_move();
 
         // Check if there is a piece at `from`
-        let Some(moved) = *self.piece_at(from) else {
-            return false;
-        };
+        let moved = self
+            .piece_at(from)
+            .ok_or(MoveError::Inconsistent("No piece found"))?;
 
         // Check if the piece belongs to the side to move
         if moved.color != stm {
-            return false;
+            return Err(MoveError::Inconsistent(
+                "The piece is not for the side to move",
+            ));
         }
 
         // Check promotion conditions
         if promote && !from.in_promotion_zone(stm) && !to.in_promotion_zone(stm) {
-            return false;
+            return Err(MoveError::Inconsistent("The piece cannot promote"));
         }
 
         // Check if the piece can move to `to`
         if !self.move_candidates(from, moved).any(|sq| sq == to) {
-            return false;
+            return Err(MoveError::Inconsistent("The piece cannot move to there"));
         }
 
         // Check if the piece can be placed at `to` without promotion
         if !promote && !moved.is_placeable_at(to) {
-            return false;
+            return Err(MoveError::NonMovablePiece);
         }
 
         // Check if the piece type can promote
         if promote && moved.promote().is_none() {
-            return false;
+            return Err(MoveError::Inconsistent(
+                "This type of piece cannot promote",
+            ));
         }
 
         // Check if the move leaves the king in check
-        !self.leaves_king_in_check_normal(from, to, moved)
+        if self.leaves_king_in_check_normal(from, to, moved) {
+            return Err(MoveError::InCheck);
+        }
+
+        Ok(())
     }
 
-    fn is_legal_drop_move(&self, to: Square, pt: PieceType) -> bool {
+    fn validate_drop_move(&self, to: Square, pt: PieceType) -> Result<(), MoveError> {
         let stm = self.side_to_move();
         let opponent = stm.flip();
 
         // Check if `to` is empty
         if self.piece_at(to).is_some() {
-            return false;
+            return Err(MoveError::Inconsistent("There is already a piece in `to`"));
         }
 
         let pc = Piece {
@@ -892,12 +764,12 @@ impl Position {
 
         // Check if the piece is in hand
         if self.hand(pc) == 0 {
-            return false;
+            return Err(MoveError::Inconsistent("The piece is not in the hand"));
         }
 
         // Check if the piece can be placed at `to`
         if !pc.is_placeable_at(to) {
-            return false;
+            return Err(MoveError::NonMovablePiece);
         }
 
         // Pawn-specific rules
@@ -906,7 +778,7 @@ impl Position {
             for i in 0..9 {
                 if let Some(fp) = *self.piece_at(Square::new(to.file(), i).unwrap()) {
                     if fp == pc {
-                        return false;
+                        return Err(MoveError::Nifu);
                     }
                 }
             }
@@ -946,7 +818,7 @@ impl Position {
                                 self.move_candidates(king_sq, king_pc).all(is_attacked);
 
                             if uchifuzume {
-                                return false;
+                                return Err(MoveError::Uchifuzume);
                             }
                         }
                     }
@@ -955,7 +827,11 @@ impl Position {
         }
 
         // Check if the move leaves the king in check
-        !self.leaves_king_in_check_drop(to)
+        if self.leaves_king_in_check_drop(to) {
+            return Err(MoveError::InCheck);
+        }
+
+        Ok(())
     }
 
     /// Checks if the king is attacked by a specific color with a custom occupied bitboard.
