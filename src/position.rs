@@ -28,9 +28,9 @@ impl MoveRecord {
     /// Converts the move into SFEN formatted string.
     pub fn to_sfen(&self) -> String {
         match *self {
-            MoveRecord::Normal {
-                from, to, promoted, ..
-            } => format!("{}{}{}", from, to, if promoted { "+" } else { "" }),
+            MoveRecord::Normal { from, to, promoted, .. } => {
+                format!("{}{}{}", from, to, if promoted { "+" } else { "" })
+            }
             MoveRecord::Drop {
                 to,
                 piece: Piece { piece_type, .. },
@@ -188,44 +188,37 @@ impl Position {
             return false;
         }
 
-        let (mut point, count) =
-            PieceType::iter()
-                .filter(|&pt| pt != PieceType::King)
-                .fold((0, 0), |accum, pt| {
-                    let unit = match pt {
-                        PieceType::Rook
-                        | PieceType::Bishop
-                        | PieceType::ProRook
-                        | PieceType::ProBishop => 5,
-                        _ => 1,
-                    };
+        let (mut point, count) = PieceType::iter()
+            .filter(|&pt| pt != PieceType::King)
+            .fold((0, 0), |accum, pt| {
+                let unit = match pt {
+                    PieceType::Rook | PieceType::Bishop | PieceType::ProRook | PieceType::ProBishop => 5,
+                    _ => 1,
+                };
 
-                    let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()])
-                        & &BBFactory::promote_zone(c);
-                    let count = bb.count() as u8;
-                    let point = count * unit;
+                let bb = &(&self.type_bb[pt.index()] & &self.color_bb[c.index()]) & &BBFactory::promote_zone(c);
+                let count = bb.count() as u8;
+                let point = count * unit;
 
-                    (accum.0 + point, accum.1 + count)
-                });
+                (accum.0 + point, accum.1 + count)
+            });
 
         if count < 10 {
             return false;
         }
 
-        point += PieceType::iter()
-            .filter(|pt| pt.is_hand_piece())
-            .fold(0, |acc, pt| {
-                let num = self.hand.get(Piece {
-                    piece_type: pt,
-                    color: c,
-                });
-                let pp = match pt {
-                    PieceType::Rook | PieceType::Bishop => 5,
-                    _ => 1,
-                };
-
-                acc + num * pp
+        point += PieceType::iter().filter(|pt| pt.is_hand_piece()).fold(0, |acc, pt| {
+            let num = self.hand.get(Piece {
+                piece_type: pt,
+                color: c,
             });
+            let pp = match pt {
+                PieceType::Rook | PieceType::Bishop => 5,
+                _ => 1,
+            };
+
+            acc + num * pp
+        });
 
         let lowerbound = match c {
             Color::Black => 28,
@@ -271,25 +264,16 @@ impl Position {
                     piece.piece_type,
                 ]
                 .iter()
-                .any(|&attack_pt| {
-                    self.get_attackers_of_type(attack_pt, king_sq, stm.flip())
-                        .is_any()
-                })
+                .any(|&attack_pt| self.get_attackers_of_type(attack_pt, king_sq, stm.flip()).is_any())
             }
-            Move::Drop { piece_type, .. } => self
-                .get_attackers_of_type(piece_type, king_sq, stm.flip())
-                .is_any(),
+            Move::Drop { piece_type, .. } => self.get_attackers_of_type(piece_type, king_sq, stm.flip()).is_any(),
         }
     }
 
     /// Returns the position of the king with the given color.
     pub fn find_king(&self, c: Color) -> Option<Square> {
         let mut bb = &self.type_bb[PieceType::King.index()] & &self.color_bb[c.index()];
-        if bb.is_any() {
-            Some(bb.pop())
-        } else {
-            None
-        }
+        if bb.is_any() { Some(bb.pop()) } else { None }
     }
 
     /// Sets a piece at the given square.
@@ -369,12 +353,7 @@ impl Position {
         Ok(())
     }
 
-    fn make_normal_move(
-        &mut self,
-        from: Square,
-        to: Square,
-        promoted: bool,
-    ) -> Result<MoveRecord, MoveError> {
+    fn make_normal_move(&mut self, from: Square, to: Square, promoted: bool) -> Result<MoveRecord, MoveError> {
         // Validate the move first
         self.validate_normal_move(from, to, promoted)?;
 
@@ -384,11 +363,7 @@ impl Position {
         let moved = self.piece_at(from).unwrap();
         let captured = *self.piece_at(to);
 
-        let placed = if promoted {
-            moved.promote().unwrap()
-        } else {
-            moved
-        };
+        let placed = if promoted { moved.promote().unwrap() } else { moved };
 
         // Update board state
         self.set_piece(from, None);
@@ -495,26 +470,11 @@ impl Position {
         let ksq = ksq.unwrap();
 
         [
-            (
-                PieceType::Rook,
-                BBFactory::rook_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::ProRook,
-                BBFactory::rook_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::Bishop,
-                BBFactory::bishop_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::ProBishop,
-                BBFactory::bishop_attack(ksq, &Bitboard::empty()),
-            ),
-            (
-                PieceType::Lance,
-                BBFactory::lance_attack(c, ksq, &Bitboard::empty()),
-            ),
+            (PieceType::Rook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProRook, BBFactory::rook_attack(ksq, &Bitboard::empty())),
+            (PieceType::Bishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::ProBishop, BBFactory::bishop_attack(ksq, &Bitboard::empty())),
+            (PieceType::Lance, BBFactory::lance_attack(c, ksq, &Bitboard::empty())),
         ]
         .iter()
         .fold(Bitboard::empty(), |mut accum, &(pt, ref mask)| {
@@ -548,9 +508,7 @@ impl Position {
                 promoted,
             } => {
                 if self.piece_at(from).is_some() {
-                    return Err(MoveError::Inconsistent(
-                        "`from` of the move is filled by another piece",
-                    ));
+                    return Err(MoveError::Inconsistent("`from` of the move is filled by another piece"));
                 }
 
                 let moved = if promoted {
@@ -562,9 +520,7 @@ impl Position {
                     *placed
                 };
                 if *self.piece_at(to) != Some(*placed) {
-                    return Err(MoveError::Inconsistent(
-                        "Expected piece is not found in `to`",
-                    ));
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
                 }
 
                 self.set_piece(from, Some(moved));
@@ -586,9 +542,7 @@ impl Position {
             }
             MoveRecord::Drop { to, piece } => {
                 if *self.piece_at(to) != Some(piece) {
-                    return Err(MoveError::Inconsistent(
-                        "Expected piece is not found in `to`",
-                    ));
+                    return Err(MoveError::Inconsistent("Expected piece is not found in `to`"));
                 }
 
                 self.set_piece(to, None);
@@ -702,24 +656,15 @@ impl Position {
         }
     }
 
-    fn validate_normal_move(
-        &self,
-        from: Square,
-        to: Square,
-        promote: bool,
-    ) -> Result<(), MoveError> {
+    fn validate_normal_move(&self, from: Square, to: Square, promote: bool) -> Result<(), MoveError> {
         let stm = self.side_to_move();
 
         // Check if there is a piece at `from`
-        let moved = self
-            .piece_at(from)
-            .ok_or(MoveError::Inconsistent("No piece found"))?;
+        let moved = self.piece_at(from).ok_or(MoveError::Inconsistent("No piece found"))?;
 
         // Check if the piece belongs to the side to move
         if moved.color != stm {
-            return Err(MoveError::Inconsistent(
-                "The piece is not for the side to move",
-            ));
+            return Err(MoveError::Inconsistent("The piece is not for the side to move"));
         }
 
         // Check promotion conditions
@@ -816,8 +761,7 @@ impl Position {
                                 self.is_attacked_by_with_occupied(sq, stm, &virtual_occupied)
                             };
 
-                            let uchifuzume =
-                                self.move_candidates(king_sq, king_pc).all(is_attacked);
+                            let uchifuzume = self.move_candidates(king_sq, king_pc).all(is_attacked);
 
                             if uchifuzume {
                                 return Err(MoveError::Uchifuzume);
@@ -838,10 +782,7 @@ impl Position {
 
     /// Checks if the king is attacked by a specific color with a custom occupied bitboard.
     fn is_attacked_by_with_occupied(&self, sq: Square, c: Color, occupied: &Bitboard) -> bool {
-        PieceType::iter().any(|pt| {
-            self.get_attackers_of_type_with_occupied(pt, sq, c, occupied)
-                .is_any()
-        })
+        PieceType::iter().any(|pt| self.get_attackers_of_type_with_occupied(pt, sq, c, occupied).is_any())
     }
 
     /// Gets attackers of a specific type with a custom occupied bitboard.
@@ -873,17 +814,14 @@ impl Position {
             PieceType::Bishop => BBFactory::bishop_attack(sq, occupied),
             PieceType::Lance => BBFactory::lance_attack(p.color, sq, occupied),
             PieceType::ProRook => {
-                &BBFactory::rook_attack(sq, occupied)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                &BBFactory::rook_attack(sq, occupied) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
             PieceType::ProBishop => {
-                &BBFactory::bishop_attack(sq, occupied)
-                    | &BBFactory::attacks_from(PieceType::King, p.color, sq)
+                &BBFactory::bishop_attack(sq, occupied) | &BBFactory::attacks_from(PieceType::King, p.color, sq)
             }
-            PieceType::ProSilver
-            | PieceType::ProKnight
-            | PieceType::ProLance
-            | PieceType::ProPawn => BBFactory::attacks_from(PieceType::Gold, p.color, sq),
+            PieceType::ProSilver | PieceType::ProKnight | PieceType::ProLance | PieceType::ProPawn => {
+                BBFactory::attacks_from(PieceType::Gold, p.color, sq)
+            }
             pt => BBFactory::attacks_from(pt, p.color, sq),
         };
 
@@ -1159,9 +1097,7 @@ impl Position {
                 }
                 s => {
                     match Piece::from_sfen(s) {
-                        Some(p) => self
-                            .hand
-                            .set(p, if num_pieces == 0 { 1 } else { num_pieces }),
+                        Some(p) => self.hand.set(p, if num_pieces == 0 { 1 } else { num_pieces }),
                         None => return Err(SfenError::IllegalPieceType),
                     };
                     num_pieces = 0;
@@ -1204,11 +1140,7 @@ impl Position {
             })
             .join("/");
 
-        let color = if self.side_to_move == Color::Black {
-            "b"
-        } else {
-            "w"
-        };
+        let color = if self.side_to_move == Color::Black { "b" } else { "w" };
 
         let mut hand = [Color::Black, Color::White]
             .iter()
@@ -1295,10 +1227,7 @@ impl fmt::Display for Position {
 
         let fmt_hand = |color: Color, f: &mut fmt::Formatter| -> fmt::Result {
             for pt in PieceType::iter().filter(|pt| pt.is_hand_piece()) {
-                let pc = Piece {
-                    piece_type: pt,
-                    color,
-                };
+                let pc = Piece { piece_type: pt, color };
                 let n = self.hand.get(pc);
 
                 if n > 0 {
