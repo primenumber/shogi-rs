@@ -885,7 +885,7 @@ impl Position {
             king_sq,
             Piece {
                 piece_type: PieceType::Rook,
-                color: attacker,
+                color: attacker.flip(),
             },
             virtual_occupied,
         );
@@ -893,7 +893,7 @@ impl Position {
             king_sq,
             Piece {
                 piece_type: PieceType::Bishop,
-                color: attacker,
+                color: attacker.flip(),
             },
             virtual_occupied,
         );
@@ -901,7 +901,7 @@ impl Position {
             king_sq,
             Piece {
                 piece_type: PieceType::Gold,
-                color: attacker,
+                color: attacker.flip(),
             },
             virtual_occupied,
         );
@@ -909,7 +909,7 @@ impl Position {
             king_sq,
             Piece {
                 piece_type: PieceType::King,
-                color: attacker,
+                color: attacker.flip(),
             },
             virtual_occupied,
         );
