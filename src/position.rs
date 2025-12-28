@@ -880,6 +880,39 @@ impl Position {
         virtual_occupied: &Bitboard,
         captured_sq: Option<Square>,
     ) -> bool {
+        // precompute attack patterns
+        let rook_attack_bb = self.move_candidates_with_occupied(
+            king_sq,
+            Piece {
+                piece_type: PieceType::Rook,
+                color: attacker,
+            },
+            virtual_occupied,
+        );
+        let bishop_attack_bb = self.move_candidates_with_occupied(
+            king_sq,
+            Piece {
+                piece_type: PieceType::Bishop,
+                color: attacker,
+            },
+            virtual_occupied,
+        );
+        let gold_attack_bb = self.move_candidates_with_occupied(
+            king_sq,
+            Piece {
+                piece_type: PieceType::Gold,
+                color: attacker,
+            },
+            virtual_occupied,
+        );
+        let king_attack_bb = self.move_candidates_with_occupied(
+            king_sq,
+            Piece {
+                piece_type: PieceType::King,
+                color: attacker,
+            },
+            virtual_occupied,
+        );
         for pt in PieceType::iter() {
             let mut attackers = &self.type_bb[pt.index()] & &self.color_bb[attacker.index()];
 
@@ -893,14 +926,54 @@ impl Position {
                 continue;
             }
 
+            match pt {
+                PieceType::Rook | PieceType::ProRook => {
+                    if (&attackers & &rook_attack_bb).is_any() {
+                        return true;
+                    }
+                    if pt == PieceType::ProRook {
+                        if (&attackers & &king_attack_bb).is_any() {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
+                PieceType::Bishop | PieceType::ProBishop => {
+                    if (&attackers & &bishop_attack_bb).is_any() {
+                        return true;
+                    }
+                    if pt == PieceType::ProBishop {
+                        if (&attackers & &king_attack_bb).is_any() {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
+                PieceType::Gold
+                | PieceType::ProPawn
+                | PieceType::ProLance
+                | PieceType::ProKnight
+                | PieceType::ProSilver => {
+                    if (&attackers & &gold_attack_bb).is_any() {
+                        return true;
+                    }
+                    continue;
+                }
+                PieceType::King => {
+                    if (&attackers & &king_attack_bb).is_any() {
+                        return true;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             // Compute attack pattern from king_sq for the opposite piece
             // (reverse attack to find attackers)
             let attack_pc = Piece {
                 piece_type: pt,
                 color: attacker,
             };
-            let attack_bb =
-                self.move_candidates_with_occupied(king_sq, attack_pc.flip(), virtual_occupied);
+            let attack_bb = self.move_candidates_with_occupied(king_sq, attack_pc.flip(), virtual_occupied);
 
             if (&attackers & &attack_bb).is_any() {
                 return true;
