@@ -41,6 +41,14 @@ impl PieceType {
         })
     }
 
+    pub fn from_index(index: usize) -> Option<Self> {
+        if index <= PieceType::ProPawn as usize {
+            Some(unsafe { std::mem::transmute(index as u8) })
+        } else {
+            None
+        }
+    }
+
     /// Returns an instance of `PieceType` after promotion.
     ///
     /// # Examples
@@ -160,22 +168,7 @@ impl iter::Iterator for PieceTypeIter {
         let current = self.current;
 
         if let Some(current) = self.current {
-            self.current = match current {
-                PieceType::King => Some(PieceType::Rook),
-                PieceType::Rook => Some(PieceType::Bishop),
-                PieceType::Bishop => Some(PieceType::Gold),
-                PieceType::Gold => Some(PieceType::Silver),
-                PieceType::Silver => Some(PieceType::Knight),
-                PieceType::Knight => Some(PieceType::Lance),
-                PieceType::Lance => Some(PieceType::Pawn),
-                PieceType::Pawn => Some(PieceType::ProRook),
-                PieceType::ProRook => Some(PieceType::ProBishop),
-                PieceType::ProBishop => Some(PieceType::ProSilver),
-                PieceType::ProSilver => Some(PieceType::ProKnight),
-                PieceType::ProKnight => Some(PieceType::ProLance),
-                PieceType::ProLance => Some(PieceType::ProPawn),
-                PieceType::ProPawn => None,
-            };
+            self.current = PieceType::from_index(current as usize + 1);
         }
 
         current
